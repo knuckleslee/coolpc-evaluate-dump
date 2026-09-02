@@ -34,6 +34,9 @@ h1 span{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
   color:var(--ink);background:var(--surface);border:1px solid var(--rule);
   border-radius:3px;outline:none}
 #q:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+/* type=search 瀏覽器會自己加一顆清除鈕，跟 #clear 重複，關掉它 */
+#q::-webkit-search-cancel-button,#q::-webkit-search-decoration{
+  -webkit-appearance:none;appearance:none}
 #clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
   border:0;background:none;color:var(--dim);font-size:20px;cursor:pointer;
   padding:6px 10px;line-height:1;display:none}
@@ -314,14 +317,36 @@ function attrsOf(it){
   if (/\bHDR\s?\d{3,4}\b|\bHDR10\b|DisplayHDR/i.test(n)) feat.push('HDR');
   if (/\bPD\b|供電\d+W|反向充電/.test(n)) feat.push('PD 供電');
   if (/FreeSync|G[-\s]?Sync|Adaptive[-\s]?Sync/i.test(n)) feat.push('同步技術');
+  // ARGB 與一般 RGB 是不同東西（機殼風扇差很多），分開列
+  if (/\bA[-.\s]?RGB\b/i.test(n)) feat.push('ARGB');
+  else if (/\bRGB\b/i.test(n)) feat.push('RGB');
+  if (/插拔/.test(n)) feat.push('熱插拔');
   if (feat.length) a.feat = feat;
 
-  // 顏色。來源站大量存在同型號不同色的品項。
-  const col = n.match(/(珍珠白|雪白|冰藍|純白|亮白|曜黑|黑色|白色|銀色|灰色|紅色|藍色|粉色|綠色|金色|紫色)/);
-  if (col) a.color = [col[1].replace(/色$/, '')];
-  else {
-    const c2 = n.match(/(?:^|[\s\/（(【])(黑|白|銀|灰|紅|藍|粉|綠)(?=[\s\/）)】]|$)/);
-    if (c2) a.color = [c2[1]];
+  // 連線方式。三模的品名會同時寫出有線／無線／藍牙，所以三種都給，
+  // 你要用哪一種角度篩都行。
+  const conn = [];
+  if (/三模/.test(n)) conn.push('三模');
+  if (/雙模/.test(n)) conn.push('雙模');
+  if (/無線/.test(n)) conn.push('無線');
+  if (/有線/.test(n)) conn.push('有線');
+  if (/藍[牙芽]/.test(n)) conn.push('藍牙');
+  if (conn.length) a.conn = conn;
+
+  // 顏色。來源站大量存在同型號不同色的品項，而且常帶修飾詞
+  //（熔岩紅、冰川銀、太空灰、幻潮黑）。一律歸到最後那個顏色字，
+  // 否則「熔岩紅」會自成一格，跟「紅」分開。
+  // 前面要求是分隔符號，「銀欣」「金牌」「藍標」才不會被當成顏色；
+  // 但「白金」這種前後都合法的還是會中，只能列外。
+  const DELIM = '\\s\\/（()）【】｛｝,，、-';
+  const COLOR = new RegExp(`(?:^|[${DELIM}])` +
+    `([\\u4e00-\\u9fff]{0,2}[黑白銀灰紅藍粉綠金紫橘黃])(?:色|版|款|色版)?` +
+    `(?=[${DELIM}]|$)`, 'g');
+  const NOT_COLOR = /^(白金|鈦金|鍍金|純金|黃金|合金|全金|烤漆)$/;
+  for (const m of n.matchAll(COLOR)){
+    if (NOT_COLOR.test(m[1])) continue;
+    a.color = [m[1].slice(-1)];
+    break;
   }
 
   // 非螢幕也用得上：容量與保固
@@ -342,11 +367,12 @@ const FACET_DEFS = [
   ['brand','品牌'], ['size','尺寸'], ['res','解析度'], ['tier','等級'],
   ['ratio','比例'], ['panel','面板'], ['curve','曲率'], ['hz','更新率'],
   ['port','連接介面'],
-  ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
+  ['conn','連線'], ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
 ];
 const PICKED = {};          // {facet: Set(值)}
 let SUBS = null;            // 勾選中的次類。null 代表全勾，沒動過
 const EXPANDED = new Set(); // 哪幾組按了「更多」
+const FACET_SHOWN = 20;     // 一組超過這個數量才收合，其餘藏在「更多」後面
 
 let MINED = {};    // {分類: [[值,…], …]}  由 scripts/facets.py 每次抓取後重算
 
@@ -481,8 +507,17 @@ function renderSubs(domain, counted){
   const names = new Set();
   for (const it of domain) names.add(it.g || '');
   if (SUBS) for (const v of SUBS) names.add(v);
+  // 照來源站頁面上的順序：拿該次類第一筆品項的位置當排序依據。
+  // 沒有 o 的舊資料才退回筆劃。未分類一律排最後。
+  const firstAt = new Map();
+  for (const it of domain){
+    const g = it.g || '', o = ordOf(it);
+    if (o < (firstAt.get(g) ?? Infinity)) firstAt.set(g, o);
+  }
+  const at = g => firstAt.get(g) ?? Infinity;
   SUB_DOMAIN = [...names].sort((a,b) =>
-    a === '' ? 1 : b === '' ? -1 : a.localeCompare(b,'zh-Hant'));   // 未分類排最後
+    (a === '' ? 1 : b === '' ? -1 : 0) ||
+    at(a) - at(b) || a.localeCompare(b,'zh-Hant'));
   if (!SUB_DOMAIN.length){ box.innerHTML = ''; return; }
 
   const counts = new Map();
@@ -565,14 +600,14 @@ function renderFacets(pool){
     if (vals.length < 2 && !picked.size) continue;
     vals.sort(sorterFor(key));
     const open = EXPANDED.has(key);
-    const shown = open ? vals : vals.slice(0, 10);
+    const shown = open ? vals : vals.slice(0, FACET_SHOWN);
     html += `<div class="facet"><b>${label}</b><div class="vals">` +
       shown.map(([v,n]) =>
         `<button class="chip" type="button" data-f="${key}" data-v="${esc(v)}"` +
         ` aria-pressed="${picked.has(v)}">${esc(v)}<span class="n">${n}</span></button>`).join('') +
-      (vals.length > 10
+      (vals.length > FACET_SHOWN
         ? `<button class="morefacet" type="button" data-more="${key}">` +
-          (open ? '收合' : `更多 ${vals.length - 10}`) + '</button>'
+          (open ? '收合' : `更多 ${vals.length - FACET_SHOWN}`) + '</button>'
         : '') + '</div></div>';
   }
   box.innerHTML = html;
