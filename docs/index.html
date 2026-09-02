@@ -60,8 +60,27 @@ nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 #reset{padding:8px 12px;font:500 13px var(--sans);color:var(--accent);
   background:none;border:1px solid var(--rule);border-radius:3px;cursor:pointer}
 #reset[hidden]{display:none}
-.facet{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
-.facet > b{font:500 12px var(--sans);color:var(--dim);flex:0 0 62px;text-align:right}
+/* 兩欄 grid。用 flex 的話 chip 換行會退回容器最左邊，蓋掉標籤那一欄。 */
+#subs,#facets{display:flex;flex-direction:column}
+.facet{display:grid;grid-template-columns:72px 1fr;column-gap:11px;
+  padding:7px 0;border-top:1px solid var(--rule)}
+.facet > b{font:500 12px/25px var(--sans);color:var(--dim);text-align:right;
+  padding-right:11px;border-right:1px solid var(--rule)}
+.facet .vals{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+
+/* 次類採 Excel 篩選器的核取清單：預設全勾，取消某一項等於排除它。 */
+.checklist{width:100%;max-height:232px;overflow-y:auto;padding:4px 0;
+  background:var(--bg);border:1px solid var(--rule);border-radius:3px}
+.ck{display:flex;align-items:center;gap:8px;padding:3px 10px;cursor:pointer;
+  font-size:13px;line-height:1.5}
+.ck:hover{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.ck input{margin:0;flex:0 0 auto;accent-color:var(--accent)}
+.ck .t{min-width:0;overflow-wrap:anywhere}
+.ck .n{margin-left:auto;padding-left:10px;font-family:var(--mono);font-size:11px;
+  color:var(--dim);flex:0 0 auto}
+.ck.all{font-weight:500;padding-bottom:6px;margin-bottom:4px;
+  border-bottom:1px solid var(--rule)}
+.ck.zero .t{color:var(--dim)}
 .chip{font:400 13px/1 var(--sans);color:var(--ink);background:var(--bg);
   border:1px solid var(--rule);border-radius:12px;padding:5px 10px;cursor:pointer;
   white-space:nowrap}
@@ -280,8 +299,7 @@ const FACET_DEFS = [
   ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
 ];
 const PICKED = {};          // {facet: Set(值)}
-const SUBS = new Set();     // 勾選中的次類，空的代表全部
-const SUB_KEY = '__sub';    // 次類在 EXPANDED 裡的鍵
+let SUBS = null;            // 勾選中的次類。null 代表全勾，沒動過
 const EXPANDED = new Set(); // 哪幾組按了「更多」
 
 let MINED = {};    // {分類: [[值,…], …]}  由 scripts/facets.py 每次抓取後重算
@@ -328,31 +346,49 @@ function fillCategories(){
     cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
 }
 
-const SUB_SHOWN = 12;
+let SUB_DOMAIN = [];        // 目前分類下所有次類，供全選計算用
 
-// 次類為複選。沒有勾任何一項就等於全部，「全部」那顆的作用是把勾選清空。
-function renderSubs(pool){
+// 次類清單的內容取自「分頁＋分類」，不隨搜尋字變動——否則打字時整排會忽隱忽現。
+// 右邊的筆數才套用搜尋結果。
+function renderSubs(domain, counted){
   const box = $('#subs');
-  if (!$('#cat').value){ box.innerHTML = ''; return; }
-  const counts = new Map();
-  for (const it of pool) if (it.g) counts.set(it.g, (counts.get(it.g) || 0) + 1);
-  const vals = [...counts.entries()];
-  for (const v of SUBS) if (!counts.has(v)) vals.push([v, 0]);
-  if (!vals.length){ box.innerHTML = ''; return; }
-  vals.sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0],'zh-Hant'));
+  if (!$('#cat').value){ box.innerHTML = ''; SUB_DOMAIN = []; return; }
 
-  const open = EXPANDED.has(SUB_KEY);
-  const shown = open ? vals : vals.slice(0, SUB_SHOWN);
-  box.innerHTML = '<div class="facet"><b>次類</b>' +
-    `<button class="chip" type="button" data-sub="" aria-pressed="${SUBS.size === 0}">` +
-    `全部<span class="n">${pool.length}</span></button>` +
-    shown.map(([v,n]) =>
-      `<button class="chip wrap" type="button" data-sub="${esc(v)}"` +
-      ` aria-pressed="${SUBS.has(v)}">${esc(shortSub(v))}<span class="n">${n}</span></button>`).join('') +
-    (vals.length > SUB_SHOWN
-      ? `<button class="morefacet" type="button" data-more="${SUB_KEY}">` +
-        (open ? '收合' : `更多 ${vals.length - SUB_SHOWN}`) + '</button>'
-      : '') + '</div>';
+  const names = new Set();
+  for (const it of domain) names.add(it.g || '');
+  if (SUBS) for (const v of SUBS) names.add(v);
+  SUB_DOMAIN = [...names].sort((a,b) =>
+    a === '' ? 1 : b === '' ? -1 : a.localeCompare(b,'zh-Hant'));   // 未分類排最後
+  if (!SUB_DOMAIN.length){ box.innerHTML = ''; return; }
+
+  const counts = new Map();
+  for (const it of counted){
+    const k = it.g || '';
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const on = v => !SUBS || SUBS.has(v);
+  const picked = SUB_DOMAIN.filter(on).length;
+
+  const rows = SUB_DOMAIN.map(v => {
+    const n = counts.get(v) || 0;
+    return `<label class="ck${n ? '' : ' zero'}">` +
+      `<input type="checkbox" data-sub="${esc(v)}"${on(v) ? ' checked' : ''}>` +
+      `<span class="t">${v ? esc(shortSub(v)) : '（未分類）'}</span>` +
+      `<span class="n">${NT(n)}</span></label>`;
+  }).join('');
+
+  const prev = box.querySelector('.checklist');
+  const top = prev ? prev.scrollTop : 0;
+  box.innerHTML = '<div class="facet"><b>次類</b><div class="vals"><div class="checklist">' +
+    `<label class="ck all"><input type="checkbox" data-all` +
+    `${picked === SUB_DOMAIN.length ? ' checked' : ''}>` +
+    `<span class="t">（全選）</span>` +
+    `<span class="n">${NT(counted.length)}</span></label>` +
+    rows + '</div></div></div>';
+
+  const all = box.querySelector('[data-all]');
+  all.indeterminate = picked > 0 && picked < SUB_DOMAIN.length;
+  box.querySelector('.checklist').scrollTop = top;
 }
 
 // 次類名稱常附帶保固說明，選單中略去
@@ -397,14 +433,14 @@ function renderFacets(pool){
     vals.sort(sorterFor(key));
     const open = EXPANDED.has(key);
     const shown = open ? vals : vals.slice(0, 10);
-    html += `<div class="facet"><b>${label}</b>` +
+    html += `<div class="facet"><b>${label}</b><div class="vals">` +
       shown.map(([v,n]) =>
         `<button class="chip" type="button" data-f="${key}" data-v="${esc(v)}"` +
         ` aria-pressed="${picked.has(v)}">${esc(v)}<span class="n">${n}</span></button>`).join('') +
       (vals.length > 10
         ? `<button class="morefacet" type="button" data-more="${key}">` +
           (open ? '收合' : `更多 ${vals.length - 10}`) + '</button>'
-        : '') + '</div>';
+        : '') + '</div></div>';
   }
   box.innerHTML = html;
 }
@@ -422,7 +458,7 @@ function sorterFor(key){
 }
 
 function anyFilter(){
-  return $('#cat').value || SUBS.size ||
+  return $('#cat').value || SUBS ||
     Object.values(PICKED).some(s => s.size);
 }
 
@@ -472,8 +508,8 @@ function compute(){
 
   // 各層的選項數都統計「尚未套用該層篩選」的結果，避免勾選後其他選項歸零
   const searched = list => terms.length ? list.filter(i => score(i, terms) > 0) : list;
-  renderSubs(searched(out));
-  if (cat && SUBS.size) out = out.filter(i => SUBS.has(i.g));
+  renderSubs(out, searched(out));
+  if (cat && SUBS) out = out.filter(i => SUBS.has(i.g || ''));
   renderFacets(searched(out));
   if (cat) out = out.filter(matchFacets);
 
@@ -509,7 +545,9 @@ function render(reset = true){
   $('#msg').hidden = !empty;
   if (empty) $('#msg').textContent = $('#q').value.trim()
     ? '找不到符合的品項。試試更短的關鍵字，例如型號的一部分。'
-    : '這個分類目前沒有品項。累積幾天的資料後就會有內容。';
+    : (SUBS && !SUBS.size)
+      ? '次類全部取消勾選了，至少要勾一項才會有結果。'
+      : '這個分類目前沒有品項。累積幾天的資料後就會有內容。';
 }
 
 function rowEl(it){
@@ -684,23 +722,21 @@ $('#tabs').addEventListener('click', e => {
 $('#more').addEventListener('click', () => render(false));
 $('#cat').addEventListener('change', () => {
   // 換分類時舊的次類與規格勾選都失效，一併清掉
-  SUBS.clear();
+  SUBS = null;
   for (const k of Object.keys(PICKED)) delete PICKED[k];
   EXPANDED.clear();
   render();
 });
-$('#subs').addEventListener('click', e => {
-  const more = e.target.closest('[data-more]');
-  if (more){
-    EXPANDED.has(SUB_KEY) ? EXPANDED.delete(SUB_KEY) : EXPANDED.add(SUB_KEY);
-    render();
-    return;
+$('#subs').addEventListener('change', e => {
+  const cb = e.target.closest('input');
+  if (!cb) return;
+  if (cb.hasAttribute('data-all')){
+    SUBS = cb.checked ? null : new Set();
+  } else {
+    if (!SUBS) SUBS = new Set(SUB_DOMAIN);
+    cb.checked ? SUBS.add(cb.dataset.sub) : SUBS.delete(cb.dataset.sub);
+    if (SUBS.size === SUB_DOMAIN.length) SUBS = null;
   }
-  const chip = e.target.closest('.chip');
-  if (!chip) return;
-  const v = chip.dataset.sub;
-  if (!v) SUBS.clear();
-  else SUBS.has(v) ? SUBS.delete(v) : SUBS.add(v);
   render();
 });
 $('#facets').addEventListener('click', e => {
@@ -720,7 +756,7 @@ $('#facets').addEventListener('click', e => {
 });
 $('#reset').addEventListener('click', () => {
   $('#cat').value = '';
-  SUBS.clear();
+  SUBS = null;
   for (const k of Object.keys(PICKED)) delete PICKED[k];
   EXPANDED.clear();
   render();
