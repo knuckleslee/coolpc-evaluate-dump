@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>價格追蹤</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF1F4; --surface:#fff; --ink:#16212B; --dim:#61727E;
+  --rule:#D5DEE4; --up:#C4302B; --down:#0B8457; --accent:#1D4E78;
+  --sans:'Noto Sans TC',system-ui,'Microsoft JhengHei',sans-serif;
+  --mono:'Roboto Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#141B21; --surface:#1C252D; --ink:#E6EDF2; --dim:#93A3AE;
+    --rule:#2E3A44; --up:#E8615C; --down:#3CB98A; --accent:#7FB0DC;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px}
+
+header{padding:28px 0 0}
+h1{font-size:19px;font-weight:700;margin:0 0 14px;letter-spacing:.02em}
+h1 span{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
+
+.searchbar{position:relative}
+#q{width:100%;padding:14px 44px 14px 16px;font:500 17px/1.4 var(--sans);
+  color:var(--ink);background:var(--surface);border:1px solid var(--rule);
+  border-radius:3px;outline:none}
+#q:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+#clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  border:0;background:none;color:var(--dim);font-size:20px;cursor:pointer;
+  padding:6px 10px;line-height:1;display:none}
+#clear:focus-visible{outline:2px solid var(--accent)}
+
+.status{font-size:13px;color:var(--dim);margin:10px 0 0;font-variant-numeric:tabular-nums}
+.status b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+
+nav{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--rule);
+  overflow-x:auto;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{border:0;background:none;font:500 14px var(--sans);color:var(--dim);
+  padding:9px 12px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;
+  margin-bottom:-1px}
+nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+.filters{background:var(--surface);border:1px solid var(--rule);border-top:0;
+  padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.selects{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.selects select{flex:1 1 200px;min-width:0;padding:8px 10px;font:400 14px var(--sans);
+  color:var(--ink);background:var(--surface);border:1px solid var(--rule);border-radius:3px}
+.selects select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#reset{padding:8px 12px;font:500 13px var(--sans);color:var(--accent);
+  background:none;border:1px solid var(--rule);border-radius:3px;cursor:pointer}
+#reset[hidden]{display:none}
+.facet{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.facet > b{font:500 12px var(--sans);color:var(--dim);flex:0 0 62px;text-align:right}
+.chip{font:400 13px/1 var(--sans);color:var(--ink);background:var(--bg);
+  border:1px solid var(--rule);border-radius:12px;padding:5px 10px;cursor:pointer;
+  white-space:nowrap}
+.chip:hover{border-color:var(--accent)}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.chip .n{opacity:.55;font-size:11px;margin-left:3px}
+.chip[aria-pressed="true"] .n{opacity:.75}
+.morefacet{font:400 12px var(--sans);color:var(--accent);background:none;border:0;
+  cursor:pointer;padding:5px 4px}
+#list{margin:0;padding:0;list-style:none}
+.row{background:var(--surface);border:1px solid var(--rule);border-top:0;
+  display:grid;grid-template-columns:1fr auto;gap:2px 14px;
+  padding:11px 14px;cursor:pointer;align-items:baseline}
+#list li:first-child .row{border-top:0}
+.row:hover{background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
+.row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.name{font-size:14.5px;word-break:break-word}
+.meta{grid-column:1;font-size:12px;color:var(--dim)}
+.price{grid-column:2;grid-row:1;font-family:var(--mono);font-size:16px;font-weight:500;
+  text-align:right;white-space:nowrap}
+.delta{grid-column:2;grid-row:2;font-family:var(--mono);font-size:12px;text-align:right;
+  white-space:nowrap}
+.up{color:var(--up)} .down{color:var(--down)}
+.tag{display:inline-block;font-size:11px;padding:0 5px;border-radius:2px;margin-left:6px;
+  vertical-align:1px;border:1px solid currentColor}
+.tag.lowest{color:var(--down)} .tag.gone{color:var(--dim)} .tag.alias{color:var(--accent)}
+
+.detail{background:var(--surface);border:1px solid var(--rule);border-top:0;padding:14px}
+.stats{display:flex;flex-wrap:wrap;gap:0 26px;font-size:13px;color:var(--dim);margin:0 0 10px}
+.stats b{font-family:var(--mono);font-weight:500;color:var(--ink);margin-left:5px}
+svg.chart{width:100%;height:150px;display:block;overflow:visible}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .line{fill:none;stroke:var(--accent);stroke-width:2;
+  stroke-linejoin:round;stroke-linecap:round}
+.chart .dot{fill:var(--surface);stroke:var(--accent);stroke-width:2}
+.chart text{font:400 11px var(--mono);fill:var(--dim)}
+.pts{margin:8px 0 0;font-size:12.5px;color:var(--dim);font-family:var(--mono)}
+.pts.warn{font-family:var(--sans);color:var(--up)}
+.chart .dot.bad{stroke:var(--dim);stroke-dasharray:2 2;fill:var(--bg)}
+
+.msg{padding:40px 14px;text-align:center;color:var(--dim);font-size:14px}
+#more{display:block;width:100%;margin:14px 0 0;padding:11px;font:500 14px var(--sans);
+  color:var(--accent);background:var(--surface);border:1px solid var(--rule);
+  border-radius:3px;cursor:pointer}
+footer{padding:34px 0;font-size:12px;color:var(--dim)}
+footer a{color:var(--accent)}
+@media (max-width:520px){ .name{font-size:14px} .price{font-size:15px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>價格追蹤<span>每日快照</span></h1>
+  <div class="searchbar">
+    <input id="q" type="search" placeholder="搜尋品名，例如 9800X3D、5060Ti、990 PRO"
+           autocomplete="off" spellcheck="false" aria-label="搜尋品名">
+    <button id="clear" type="button" aria-label="清除搜尋">×</button>
+  </div>
+  <p class="status" id="status">載入中…</p>
+  <nav id="tabs" role="tablist">
+    <button role="tab" data-view="all" aria-selected="true">全部</button>
+    <button role="tab" data-view="changed" aria-selected="false">最近變價</button>
+    <button role="tab" data-view="lowest" aria-selected="false">目前歷史低點</button>
+    <button role="tab" data-view="new" aria-selected="false">新上架</button>
+  </nav>
+</header>
+
+<div class="filters">
+  <div class="selects">
+    <select id="cat" aria-label="分類"><option value="">全部分類</option></select>
+    <select id="sub" aria-label="次類"><option value="">全部次類</option></select>
+    <button id="reset" type="button" hidden>清除篩選</button>
+  </div>
+  <div id="facets"></div>
+</div>
+
+<ul id="list"></ul>
+<div class="msg" id="msg" hidden></div>
+<button id="more" type="button" hidden>顯示更多</button>
+
+<footer>
+  價格資料僅供參考，實際成交價以店家為準。<br>
+  <a id="repo" href="#">原始碼與資料</a>
+</footer>
+</div>
+
+<script>
+const NT = n => n.toLocaleString('en-US');
+const $ = s => document.querySelector(s);
+// 從品名與次類抽出可篩選的規格。次類由來源站分好，比品名可靠，優先採用。
+function brandOf(name){
+  let s = name.replace(/^[【\[（(]([^】\]）)]{1,6})[】\]）)]\s*/, (m, inner) =>
+    /狂|神罰|搭購|組合|任搭|限時|特價|下殺|超值|強打|爆殺|殺/.test(inner) ? '' : m);
+  s = s.replace(/^[\s★◆▼※•]+/, '');
+  const first = s.split(/[\s　/、,，]/)[0] || '';
+  const zh = first.match(/^[\u4e00-\u9fff]+/);       // 「美光Micron」取「美光」
+  if (zh && zh[0].length >= 2) return zh[0];
+  const en = first.match(/^[A-Za-z][A-Za-z\-.]*/);
+  if (en && en[0].length >= 2) return en[0].toUpperCase();
+  return zh ? zh[0] : (first.slice(0, 6) || '其他');
+}
+
+// 螢幕的介面代碼：〈2H1P1C〉= 2 個 HDMI + 1 個 DP + 1 個 USB-C
+const PORT_NAME = { H:'HDMI', P:'DisplayPort', C:'USB-C', A:'D-Sub', D:'DVI' };
+
+function portsOf(name){
+  const m = name.match(/[〈<(（]([0-9]*[HPCAD](?:[0-9]*[HPCAD])*)[\/、]/);
+  if (!m) return [];
+  const out = [];
+  for (const g of m[1].matchAll(/([0-9]*)([HPCAD])/g)){
+    if (PORT_NAME[g[2]]) out.push(PORT_NAME[g[2]]);
+  }
+  return [...new Set(out)];
+}
+
+function attrsOf(it){
+  const n = it.n, g = it.g || '', a = {};
+  a.brand = [brandOf(n)];
+
+  // 尺寸與解析度來自次類，例如「27吋(2560*1440)(4K 16:9)」
+  let m = g.match(/(\d+(?:\.\d+)?)吋/);
+  if (m) a.size = [m[1] + '吋'];
+  m = g.match(/\((\d{3,5})\s*[*xX×]\s*(\d{3,5})\)/);
+  if (m) a.res = [`${m[1]}×${m[2]}`];
+  m = g.match(/\((?:\d?[45689]K\s*)?(\d+:\d+)\)/);
+  if (m) a.ratio = [m[1]];
+  m = g.match(/\b([45689]K)\b/);
+  if (m) a.tier = [m[1]];
+
+  // 面板、更新率、介面、賣點來自品名
+  const panel = [];
+  if (/QD[-\s]?OLED/i.test(n)) panel.push('QD-OLED');
+  else if (/\bOLED\b/i.test(n)) panel.push('OLED');
+  if (/Mini\s?LED/i.test(n)) panel.push('Mini LED');
+  if (/\bIPS\b/i.test(n)) panel.push('IPS');
+  if (/\bVA\b/.test(n)) panel.push('VA');
+  if (/\bTN\b/.test(n)) panel.push('TN');
+  if (panel.length) a.panel = panel;
+
+  m = n.match(/(\d{2,3})\s*Hz/i);
+  if (m){
+    const hz = +m[1];
+    a.hz = [hz >= 240 ? '240Hz 以上' : hz >= 165 ? '165–239Hz' :
+            hz >= 120 ? '120–164Hz' : hz >= 100 ? '100–119Hz' : '100Hz 以下'];
+  }
+
+  const ports = portsOf(n);
+  if (ports.length) a.port = ports;
+
+  // 曲率半徑，數字越小弧度越大。
+  // 後方不可接英文字母，否則機殼風扇的 1800RPM 會被誤判為曲率。
+  m = n.match(/(?:^|[^0-9A-Za-z])(\d{3,4})R(?![0-9A-Za-z])/);
+  if (m && +m[1] >= 800 && +m[1] <= 4000) a.curve = [m[1] + 'R'];
+  else if (/曲面/.test(n)) a.curve = ['曲面（未標曲率）'];
+  else if (a.panel || a.size) a.curve = ['平面'];   // 有面板或尺寸才算是顯示器
+
+  const feat = [];
+  if (/可升降|升降旋轉|人體工學|可昇降/.test(n)) feat.push('可升降旋轉');
+  if (/含喇叭|內建喇叭/.test(n)) feat.push('含喇叭');
+  if (/無亮點|零亮點|無亮暗點/.test(n)) feat.push('無亮點保固');
+  if (/觸控/.test(n)) feat.push('觸控');
+  if (/\bHDR\s?\d{3,4}\b|\bHDR10\b|DisplayHDR/i.test(n)) feat.push('HDR');
+  if (/\bPD\b|供電\d+W|反向充電/.test(n)) feat.push('PD 供電');
+  if (/FreeSync|G[-\s]?Sync|Adaptive[-\s]?Sync/i.test(n)) feat.push('同步技術');
+  if (feat.length) a.feat = feat;
+
+  // 顏色。來源站大量存在同型號不同色的品項。
+  const col = n.match(/(珍珠白|雪白|冰藍|純白|亮白|曜黑|黑色|白色|銀色|灰色|紅色|藍色|粉色|綠色|金色|紫色)/);
+  if (col) a.color = [col[1].replace(/色$/, '')];
+  else {
+    const c2 = n.match(/(?:^|[\s\/（(【])(黑|白|銀|灰|紅|藍|粉|綠)(?=[\s\/）)】]|$)/);
+    if (c2) a.color = [c2[1]];
+  }
+
+  // 非螢幕也用得上：容量與保固
+  m = n.match(/(\d+(?:\.\d+)?)\s*(TB|GB)\b/i);
+  if (m) a.cap = [m[1] + m[2].toUpperCase()];
+  m = n.match(/(\d+|[一二兩三四五六七八九十])\s*年(?:保|保固|全球保|)/);
+  if (m){
+    const map = {一:1, 二:2, 兩:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9, 十:10};
+    const y = map[m[1]] || parseInt(m[1], 10);
+    if (y >= 1 && y <= 12) a.warranty = [y + ' 年保'];
+  }
+  return a;
+}
+
+
+// 篩選面板的分組定義，順序即畫面上由上而下的排列。
+const FACET_DEFS = [
+  ['brand','品牌'], ['size','尺寸'], ['res','解析度'], ['tier','等級'],
+  ['ratio','比例'], ['panel','面板'], ['curve','曲率'], ['hz','更新率'],
+  ['port','連接介面'],
+  ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
+];
+const PICKED = {};          // {facet: Set(值)}
+const EXPANDED = new Set(); // 哪幾組按了「更多」
+
+let MINED = {};    // {分類: [[值,…], …]}  由 scripts/facets.py 每次抓取後重算
+
+function buildAttrs(){
+  for (const it of ITEMS) it._a = attrsOf(it);
+  applyMined();
+}
+
+// 探勘是把品名切成片段後比對的，前端也得照同一種切法，
+// 否則「M-ATX」的品名含有 ATX 三個字，就會被算進 ATX 那一格。
+const SEG_SPLIT = /[/／、,，|｜〈〉<>【】\[\]()（）]/;
+
+function segsOf(name){
+  const out = new Set();
+  for (let seg of name.split(SEG_SPLIT)){
+    seg = seg.replace(/^[\s　.。:：*+~-]+|[\s　.。:：*+~-]+$/g, '');
+    if (seg.length > 1 && seg.length <= 14) out.add(seg);
+  }
+  return out;
+}
+
+function applyMined(){
+  for (const it of ITEMS){
+    const groups = MINED[it.c];
+    if (!groups) continue;
+    const segs = segsOf(it.n);
+    for (let gi = 0; gi < groups.length; gi++){
+      const hit = groups[gi].filter(v => segs.has(v));
+      if (hit.length) it._a['auto' + gi] = hit;
+    }
+  }
+}
+
+// 自動組無指定名稱，以組內最常見的值為標題，顯示為「ATX 等」
+function autoLabel(cat, gi){
+  const g = (MINED[cat] || [])[gi];
+  return g ? g[0] + ' 等' : '其他';
+}
+
+function fillCategories(){
+  const cats = [...new Set(ITEMS.filter(i => i.c).map(i => i.c))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  $('#cat').insertAdjacentHTML('beforeend',
+    cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
+  fillSubs();
+}
+
+function fillSubs(){
+  const cat = $('#cat').value;
+  const pool = cat ? ITEMS.filter(i => i.c === cat) : ITEMS;
+  const subs = [...new Set(pool.filter(i => i.g).map(i => i.g))]
+    .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  const keep = $('#sub').value;
+  $('#sub').innerHTML = '<option value="">全部次類</option>' +
+    subs.map(g => `<option value="${esc(g)}">${esc(shortSub(g))}</option>`).join('');
+  if (subs.includes(keep)) $('#sub').value = keep;
+}
+
+// 次類名稱常附帶保固說明，選單中略去
+const shortSub = g => g.replace(/[〈<（(]亮暗點[^〉>）)]*[〉>）)]/,'').trim();
+
+function matchFacets(it){
+  for (const [key, set] of Object.entries(PICKED)){
+    if (!set.size) continue;
+    const vals = it._a[key];
+    if (!vals || !vals.some(v => set.has(v))) return false;
+  }
+  return true;
+}
+
+function activeDefs(){
+  const cat = $('#cat').value;
+  const defs = [...FACET_DEFS];
+  const groups = cat ? (MINED[cat] || []) : [];
+  for (let gi = 0; gi < groups.length; gi++)
+    defs.push(['auto' + gi, autoLabel(cat, gi)]);
+  return defs;
+}
+
+function renderFacets(pool){
+  const box = $('#facets');
+  const defs = activeDefs();
+  const counts = {};
+  for (const [key] of defs) counts[key] = new Map();
+  for (const it of pool){
+    for (const [key] of defs){
+      for (const v of (it._a[key] || []))
+        counts[key].set(v, (counts[key].get(v) || 0) + 1);
+    }
+  }
+  let html = '';
+  for (const [key, label] of defs){
+    const picked = PICKED[key] || new Set();
+    let vals = [...counts[key].entries()].filter(([v,n]) => n > 1 || picked.has(v));
+    if (vals.length < 2 && !picked.size) continue;
+    vals.sort(sorterFor(key));
+    const open = EXPANDED.has(key);
+    const shown = open ? vals : vals.slice(0, 10);
+    html += `<div class="facet"><b>${label}</b>` +
+      shown.map(([v,n]) =>
+        `<button class="chip" type="button" data-f="${key}" data-v="${esc(v)}"` +
+        ` aria-pressed="${picked.has(v)}">${esc(v)}<span class="n">${n}</span></button>`).join('') +
+      (vals.length > 10
+        ? `<button class="morefacet" type="button" data-more="${key}">` +
+          (open ? '收合' : `更多 ${vals.length - 10}`) + '</button>'
+        : '') + '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function sorterFor(key){
+  if (key === 'size' || key === 'cap')
+    return (a,b) => parseFloat(a[0]) - parseFloat(b[0]);
+  if (key === 'res')
+    return (a,b) => parseInt(a[0]) - parseInt(b[0]);
+  if (key === 'hz'){
+    const ord = ['100Hz 以下','100–119Hz','120–164Hz','165–239Hz','240Hz 以上'];
+    return (a,b) => ord.indexOf(a[0]) - ord.indexOf(b[0]);
+  }
+  return (a,b) => b[1] - a[1];      // 其餘按數量多寡
+}
+
+function anyFilter(){
+  return $('#cat').value || $('#sub').value ||
+    Object.values(PICKED).some(s => s.size);
+}
+
+let ITEMS = [], VIEW = 'all', SHOWN = 0, RESULT = [], OPEN = null;
+const PAGE = 120, shardCache = new Map();
+
+const base = location.pathname.replace(/[^/]*$/, '');
+$('#repo').href = 'https://github.com/' + location.hostname.split('.')[0] +
+  base.replace(/\/$/, '');
+
+fetch(base + 'data/facets.json')
+  .then(r => r.ok ? r.json() : {})
+  .then(m => { MINED = m; if (ITEMS.length){ applyMined(); render(); } })
+  .catch(() => {});
+
+fetch(base + 'data/items.json')
+  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+  .then(d => {
+    ITEMS = d.items;
+    buildAttrs();
+    fillCategories();
+    $('#status').innerHTML =
+      `追蹤 <b>${NT(d.count)}</b> 項 · 資料更新於 <b>${d.updated}</b>`;
+    render();
+  })
+  .catch(e => {
+    $('#status').textContent = '資料還沒產生。到 GitHub 的 Actions 分頁手動跑一次抓取工作，' +
+      '完成後重新整理這一頁。（' + e + '）';
+  });
+
+function score(item, terms){
+  const hay = (item.n + ' ' + item.c + ' ' + item.g).toLowerCase();
+  for (const t of terms) if (!hay.includes(t)) return -1;
+  return item.n.toLowerCase().indexOf(terms[0]) === 0 ? 2 : 1;
+}
+
+function compute(){
+  const terms = $('#q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const cat = $('#cat').value, sub = $('#sub').value;
+  let out = ITEMS;
+  if (VIEW === 'changed') out = out.filter(i => i.pv !== null && !i.x);
+  else if (VIEW === 'lowest') out = out.filter(i => !i.x && i.np > 1 && i.p <= i.lo);
+  else if (VIEW === 'new') out = out.filter(i => !i.x && i.np === 1);
+  if (cat) out = out.filter(i => i.c === cat);
+  if (sub) out = out.filter(i => i.g === sub);
+
+  // 規格面板統計未套用規格篩選的結果，避免勾選後選項數歸零
+  renderFacets(terms.length
+    ? out.filter(i => score(i, terms) > 0) : out);
+  out = out.filter(matchFacets);
+
+  if (terms.length){
+    out = out.map(i => [score(i, terms), i]).filter(x => x[0] > 0);
+    out.sort((a,b) => b[0]-a[0] || a[1].p-b[1].p);
+    out = out.map(x => x[1]);
+  } else if (VIEW === 'changed'){
+    out = [...out].sort((a,b) => b.pd.localeCompare(a.pd) ||
+      Math.abs(b.p-b.pv)/b.pv - Math.abs(a.p-a.pv)/a.pv);
+  } else if (VIEW === 'lowest' || VIEW === 'new'){
+    out = [...out].sort((a,b) => b.pd.localeCompare(a.pd));
+  } else {
+    out = [...out].sort((a,b) => a.p - b.p);
+  }
+  $('#reset').hidden = !anyFilter();
+  return out;
+}
+
+function render(reset = true){
+  if (reset){ RESULT = compute(); SHOWN = 0; $('#list').innerHTML = ''; OPEN = null; }
+  const slice = RESULT.slice(SHOWN, SHOWN + PAGE);
+  const frag = document.createDocumentFragment();
+  for (const it of slice) frag.appendChild(rowEl(it));
+  $('#list').appendChild(frag);
+  SHOWN += slice.length;
+
+  $('#more').hidden = SHOWN >= RESULT.length;
+  $('#more').textContent = `顯示更多（還有 ${NT(RESULT.length - SHOWN)} 項）`;
+  const empty = RESULT.length === 0;
+  $('#msg').hidden = !empty;
+  if (empty) $('#msg').textContent = $('#q').value.trim()
+    ? '找不到符合的品項。試試更短的關鍵字，例如型號的一部分。'
+    : '這個分類目前沒有品項。累積幾天的資料後就會有內容。';
+}
+
+function rowEl(it){
+  const li = document.createElement('li');
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', 'false');
+
+  let tags = '';
+  if (it.x) tags += `<span class="tag gone">已下架 ${it.l}</span>`;
+  if (it.a && it.a.length) tags += `<span class="tag alias">改過名</span>`;
+  else if (it.np > 1 && it.p <= it.lo) tags += '<span class="tag lowest">歷史低點</span>';
+
+  let delta = '<span style="color:var(--dim)">—</span>';
+  if (it.pv !== null){
+    const d = it.p - it.pv, cls = d > 0 ? 'up' : 'down';
+    const pct = (d / it.pv * 100).toFixed(1);
+    delta = `<span class="${cls}">${d > 0 ? '▲' : '▼'}${NT(Math.abs(d))}` +
+            ` (${d > 0 ? '+' : ''}${pct}%) ${it.pd.slice(5)}</span>`;
+  }
+
+  row.innerHTML =
+    `<div class="name">${esc(it.n)}${tags}</div>` +
+    `<div class="price">$${NT(it.p)}</div>` +
+    `<div class="meta">${esc(it.c)}${it.g ? ' · ' + esc(it.g) : ''}</div>` +
+    `<div class="delta">${delta}</div>`;
+
+  const toggle = () => openDetail(li, row, it);
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+  });
+  li.appendChild(row);
+  return li;
+}
+
+async function openDetail(li, row, it){
+  const existing = li.querySelector('.detail');
+  if (existing){ existing.remove(); row.setAttribute('aria-expanded','false'); return; }
+  if (OPEN && OPEN !== li){
+    OPEN.querySelector('.detail')?.remove();
+    OPEN.querySelector('.row')?.setAttribute('aria-expanded','false');
+  }
+  OPEN = li;
+  row.setAttribute('aria-expanded','true');
+
+  const box = document.createElement('div');
+  box.className = 'detail';
+  box.innerHTML = '<div class="pts">載入價格歷史…</div>';
+  li.appendChild(box);
+
+  try {
+    const series = await loadHistory(it.id);
+    box.innerHTML = detailHTML(it, series);
+  } catch (e){
+    box.innerHTML = '<div class="pts">讀不到這項的歷史資料（' + e + '）</div>';
+  }
+}
+
+async function loadHistory(id){
+  const key = id.slice(0,2);
+  if (!shardCache.has(key)){
+    shardCache.set(key, fetch(base + 'data/hist/' + key + '.json')
+      .then(r => r.ok ? r.json() : {}));
+  }
+  const shard = await shardCache.get(key);
+  return shard[id] || [];
+}
+
+function spikes(series){
+  // 單點暴衝後立即回到原價，判定為來源站標價錯誤（例如 $1690 誤植為 $16690）
+  const bad = new Set();
+  for (let i = 1; i < series.length - 1; i++){
+    const a = series[i-1][1], b = series[i][1], c = series[i+1][1];
+    if (Math.abs(b-a)/a > 2 && Math.abs(c-a)/a < 0.3) bad.add(i);
+  }
+  return bad;
+}
+
+function detailHTML(it, series){
+  const span = series.length > 1
+    ? `${series[0][0]} 起 · 變價 ${series.length - 1} 次`
+    : `${it.f} 起 · 尚未變過價`;
+  const bad = spikes(series);
+  const stats =
+    `<div class="stats">` +
+    `<span>最低<b>$${NT(it.lo)}</b></span>` +
+    `<span>最高<b>$${NT(it.hi)}</b></span>` +
+    `<span>現價<b>$${NT(it.p)}</b></span>` +
+    `<span>${span}</span></div>`;
+  const alias = (it.a && it.a.length)
+    ? `<div class="pts">曾用名：${it.a.map(esc).join('　／　')}</div>` : '';
+  const warn = bad.size
+    ? `<div class="pts warn">有 ${bad.size} 個價位暴衝後隨即回復，` +
+      `多半是來源站當天標錯，圖上以空心點標示。</div>` : '';
+  return stats + chartSVG(series, it, bad) + warn +
+    `<div class="pts">${series.slice(-6).reverse()
+      .map(p => `${p[0]} $${NT(p[1])}`).join('　')}</div>` + alias;
+}
+
+function chartSVG(series, it, bad){
+  bad = bad || new Set();
+  if (series.length < 2)
+    return '<div class="pts">目前只有一個價格點，等價格變動後就會出現走勢圖。</div>';
+
+  const W = 640, H = 150, L = 56, R = 10, T = 12, B = 24;
+  const pts = series.map(([d,p]) => [Date.parse(d), p]);
+  // 將最後一個價格延伸至今日，以反映該價格持續至今
+  const endT = it.x ? Date.parse(it.l) : Date.now();
+  if (endT > pts[pts.length-1][0]) pts.push([endT, pts[pts.length-1][1]]);
+
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  // 計算縱軸範圍時排除標錯的點，避免圖形被壓縮
+  const sane = series.filter((_, i) => !bad.has(i)).map(p => p[1]);
+  const ysr = sane.length > 1 ? sane : ys;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ysr), y1 = Math.max(...ysr);
+  const pad = (y1 - y0) * 0.15 || Math.max(y1 * 0.02, 1);
+  y0 -= pad; y1 += pad;
+  const X = t => L + (x1 === x0 ? 0 : (t - x0) / (x1 - x0)) * (W - L - R);
+  const Y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+
+  // 階梯線：價格在下次調整前維持不變
+  let d = `M${X(pts[0][0]).toFixed(1)},${Math.max(T-4, Math.min(H-B+4, Y(pts[0][1]))).toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++){
+    d += `H${X(pts[i][0]).toFixed(1)}`;
+    if (pts[i][1] !== pts[i-1][1])
+      d += `V${Math.max(T-4, Math.min(H-B+4, Y(pts[i][1]))).toFixed(1)}`;
+  }
+
+  const lo = Math.min(...ysr), hi = Math.max(...ysr);
+  const grid = [hi, lo].map(v =>
+    `<line class="axis" x1="${L}" y1="${Y(v).toFixed(1)}" x2="${W-R}" y2="${Y(v).toFixed(1)}"/>` +
+    `<text x="${L-8}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end">${NT(v)}</text>`
+  ).join('');
+
+  const clamp = v => Math.max(T-4, Math.min(H-B+4, Y(v)));
+  const dots = series.map(([dt,p],i) =>
+    `<circle class="dot${bad.has(i)?' bad':''}" cx="${X(Date.parse(dt)).toFixed(1)}"` +
+    ` cy="${clamp(p).toFixed(1)}" r="3">` +
+    `<title>${dt}　$${NT(p)}${bad.has(i)?'（疑似標錯）':''}</title></circle>`).join('');
+
+  const fmt = t => new Date(t).toISOString().slice(5,10).replace('-','/');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+    role="img" aria-label="價格走勢，最低 ${lo}，最高 ${hi}">
+    ${grid}<path class="line" d="${d}"/>${dots}
+    <text x="${L}" y="${H-6}">${fmt(x0)}</text>
+    <text x="${W-R}" y="${H-6}" text-anchor="end">${fmt(x1)}</text></svg>`;
+}
+
+const esc = s => s.replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let timer;
+$('#q').addEventListener('input', () => {
+  $('#clear').style.display = $('#q').value ? 'block' : 'none';
+  clearTimeout(timer);
+  timer = setTimeout(() => render(), 130);
+});
+$('#clear').addEventListener('click', () => {
+  $('#q').value = ''; $('#clear').style.display = 'none'; render(); $('#q').focus();
+});
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-view]');
+  if (!b) return;
+  for (const x of $('#tabs').children) x.setAttribute('aria-selected', String(x === b));
+  VIEW = b.dataset.view;
+  render();
+});
+$('#more').addEventListener('click', () => render(false));
+$('#cat').addEventListener('change', () => {
+  $('#sub').value = '';
+  for (const k of Object.keys(PICKED)) if (k.startsWith('auto')) delete PICKED[k];
+  fillSubs(); render();
+});
+$('#sub').addEventListener('change', () => render());
+$('#facets').addEventListener('click', e => {
+  const more = e.target.closest('[data-more]');
+  if (more){
+    const k = more.dataset.more;
+    EXPANDED.has(k) ? EXPANDED.delete(k) : EXPANDED.add(k);
+    render();
+    return;
+  }
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const { f, v } = chip.dataset;
+  PICKED[f] = PICKED[f] || new Set();
+  PICKED[f].has(v) ? PICKED[f].delete(v) : PICKED[f].add(v);
+  render();
+});
+$('#reset').addEventListener('click', () => {
+  $('#cat').value = ''; $('#sub').value = ''; fillSubs();
+  for (const k of Object.keys(PICKED)) delete PICKED[k];
+  EXPANDED.clear();
+  render();
+});
+</script>
+</body>
+</html>

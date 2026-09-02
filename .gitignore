@@ -1,0 +1,6 @@
+local/
+docs/data/compare-*.json
+
+__pycache__/
+*.pyc
+.DS_Store

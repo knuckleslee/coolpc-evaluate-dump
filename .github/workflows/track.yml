@@ -1,0 +1,48 @@
+name: 抓取價格
+
+on:
+  schedule:
+    # GitHub 用的是 UTC，這兩個對應台灣時間 10:05 與 22:05
+    - cron: '5 2 * * *'
+    - cron: '5 14 * * *'
+  workflow_dispatch:        # 讓你可以在網頁上手動按一下就跑
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 抓取並解析
+        env:
+          SOURCE_URL: ${{ secrets.SOURCE_URL }}
+          REDACT_WORDS: ${{ secrets.REDACT_WORDS }}
+        run: python scripts/scrape.py
+
+      - name: 存檔
+        run: |
+          git config user.name  "price-tracker"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data
+          if git diff --staged --quiet; then
+            echo "價格沒有變動，這次不建立紀錄"
+            exit 0
+          fi
+          git commit -m "價格更新 $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
+          git pull --rebase --autostash
+          git push
