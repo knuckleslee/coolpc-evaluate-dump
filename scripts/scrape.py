@@ -27,11 +27,6 @@ from identity import bare, item_id, redact, relink
 # 抓取目標。放在環境變數裡，公開的程式碼就不必寫死是哪一家。
 # 本機測試可以先 export SOURCE_URL=...，GitHub 上設成 repository secret。
 URL = os.environ.get("SOURCE_URL", "")
-if not URL:
-    raise SystemExit(
-        "沒有設定 SOURCE_URL。GitHub 上請到 Settings → Secrets and variables\n"
-        "→ Actions → New repository secret，名稱填 SOURCE_URL，值填估價單網址。"
-    )
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "docs" / "data"
 HIST = DATA / "hist"
@@ -53,6 +48,13 @@ PRICE_RE = re.compile(r"\$\s*([\d,]+)")
 
 def fetch_html() -> str:
     """抓頁面並處理 Big5 編碼。失敗時重試。"""
+    # 檢查放在這裡而不是模組層級，這樣 rollback.py 之類的工具可以
+    # 直接沿用本檔的讀寫函式，不必為了 import 而假造一個網址。
+    if not URL:
+        raise SystemExit(
+            "沒有設定 SOURCE_URL。GitHub 上請到 Settings → Secrets and variables\n"
+            "→ Actions → New repository secret，名稱填 SOURCE_URL，值填估價單網址。"
+        )
     last_err = None
     for attempt in range(1, 4):
         try:
@@ -243,6 +245,9 @@ def main() -> None:
         return shards[key]
 
     added = changed = 0
+    # 改名有兩種：配對接續換 id，以及品名微調但 id 不變。兩種都會寫入曾用名，
+    # 都得記下來，否則之後要「當作沒抓過這次」時還原不回去。
+    rename_log = []
     for row in resolved:
         iid = row["_id"] or rename_map.get(row["id"]) or row["id"]
         del row["_id"]
@@ -260,6 +265,7 @@ def main() -> None:
             aliases = list(prev.get("a", []))
             if bare(prev["n"]) != bare(row["n"]) and prev["n"] not in aliases:
                 aliases.append(prev["n"])      # 品名換了，把舊的留成曾用名
+                rename_log.append([iid, prev["n"], row["n"]])
             row.update(
                 pv=prev.get("pv"),
                 pd=prev.get("pd", today),
@@ -309,6 +315,24 @@ def main() -> None:
         path.write_text("{" + body + "}\n", encoding="utf-8")
 
     build_facets(items, DATA / "facets.json")
+
+    # 抓取紀錄。要「當作沒抓過某一次」時，價格點自己帶日期刪得掉，
+    # 當天新增的品項刪完點之後歷史會變空、認得出來，這兩項都不必記。
+    # 下架標記也不必記：下次抓取會重新判定，還在架上的會自己改回來。
+    # 只有改名接續非記不可——它把品名換掉了，沒有日期，
+    # 而且下次抓取會用新品名再對回同一筆，錯誤的接續會一直黏著解不開。
+    runs = load_json(DATA / "runs.json", {"schema": 1, "runs": []})
+    runs["runs"] = [r for r in runs["runs"] if r["date"] != today]
+    runs["runs"].append({
+        "date": today, "at": now, "parsed": len(rows),
+        "added": added, "changed": changed,
+        "gone": gone, "renamed": rename_log,
+    })
+    runs["runs"] = runs["runs"][-90:]      # 只留最近 90 次，免得檔案無限長大
+    (DATA / "runs.json").write_text(
+        json.dumps(runs, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
 
     (DATA / "meta.json").write_text(
         json.dumps(
