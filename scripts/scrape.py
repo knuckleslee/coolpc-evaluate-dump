@@ -94,14 +94,20 @@ def category_of(select) -> str:
 
 def clean_name(name: str) -> str:
     """去掉品名尾巴的促銷字樣，讓同一支商品在不同天算成同一筆。"""
+    name = re.sub(r"↓\s*(酷幣|任搭)\s*[\d,]+\s*↓", "", name)
     name = re.sub(r"[▼↘↗]\s*(下殺|下砍|特價|降價)到[^$]*$", "", name)
     name = re.sub(r"\s*\*\s*(限時|特價|出清|優惠|活動|促銷|贈品)[^$]*$", "", name)
     name = re.sub(r"[▼↘↗◆★]+", " ", name)
     return tidy(name).strip(" -–—,、")
 
 
+# 酷幣是結帳當下直接折抵的金額，標在價格後面，例如「, $7990 ◆ ★ 熱賣 ↓酷幣300↓」。
+# 另一種「↓任搭300↓」要跟別的商品一起買才算，不是立即折扣，所以不收。
+COIN_RE = re.compile(r"↓\s*酷幣\s*([\d,]+)\s*↓")
+
+
 def parse_option(text: str):
-    """把一行 option 文字拆成 (品名, 價格)。不是品項就回 None。"""
+    """把一行 option 文字拆成 (品名, 價格, 酷幣)。不是品項就回 None。"""
     text = tidy(text)
     if not text or text[0] in SKIP_PREFIX:
         return None
@@ -112,16 +118,21 @@ def parse_option(text: str):
     price = int(prices[-1].replace(",", ""))
     if price < 10:  # $1 的登錄禮、活動項目
         return None
+    m = COIN_RE.search(text)
+    coin = int(m.group(1).replace(",", "")) if m else 0
+    if coin >= price:      # 折抵不可能大於等於售價，這種八成是解析錯了
+        coin = 0
     idx = text.rfind(", $")
     name = clean_name(text[:idx] if idx > 0 else PRICE_RE.sub("", text))
     if len(name) < 4:
         return None
-    return name, price
+    return name, price, coin
 
 
 def parse(html: str):
     soup = BeautifulSoup(html, "lxml")
     rows, seen = [], set()
+    cat_order = []          # 分類在頁面上的先後，供網頁的分類選單照原順序排
     for sel in soup.find_all("select"):
         options = sel.find_all("option")
         # 數量選單（1~10）沒有 optgroup 且全是數字，跳過
@@ -130,11 +141,13 @@ def parse(html: str):
         ):
             continue
         category = category_of(sel)
+        got = False
         for opt in options:
             parsed = parse_option(opt.get_text())
             if not parsed:
                 continue
-            name, price = parsed
+            name, price = parsed[0], parsed[1]
+            coin = parsed[2]
             group = ""
             parent = opt.find_parent("optgroup")
             if parent is not None:
@@ -144,8 +157,14 @@ def parse(html: str):
             if iid in seen:  # 同一頁重複列出時只取第一次
                 continue
             seen.add(iid)
-            rows.append({"id": iid, "c": category, "g": group, "n": name, "p": price})
-    return rows
+            rows.append({"id": iid, "c": category, "g": group, "n": name,
+                         "p": price, "k": coin})
+            got = True
+        # 同一個分類可能拆成好幾個 select，只記第一次出現的位置；
+        # 整個 select 都沒解析出品項的話不算數
+        if got and category not in cat_order:
+            cat_order.append(category)
+    return rows, cat_order
 
 
 def load_json(path: Path, default):
@@ -175,10 +194,10 @@ def main() -> None:
 
     if identity_module._STORE is None:
         print("警告：沒有設定 REDACT_WORDS，來源站名稱不會被遮蔽", file=sys.stderr)
-    rows = parse(fetch_html())
+    rows, cat_order = parse(fetch_html())
     if len(rows) < 1000:
         raise SystemExit(f"只解析到 {len(rows)} 筆，明顯不對，中止以免污染歷史資料")
-    print(f"解析到 {len(rows)} 筆品項")
+    print(f"解析到 {len(rows)} 筆品項，{len(cat_order)} 個分類")
 
     old = load_json(DATA / "items.json", {"items": []})
     known = {i["id"]: i for i in old.get("items", [])}
@@ -273,7 +292,7 @@ def main() -> None:
     items = sorted(known.values(), key=lambda i: (i["c"], i["g"], i["n"]))
     dump_lines(
         DATA / "items.json",
-        {"schema": 1, "updated": now, "count": len(items)},
+        {"schema": 1, "updated": now, "count": len(items), "cats": cat_order},
         "items",
         items,
     )
