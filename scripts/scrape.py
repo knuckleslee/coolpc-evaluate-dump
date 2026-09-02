@@ -157,8 +157,9 @@ def parse(html: str):
             if iid in seen:  # 同一頁重複列出時只取第一次
                 continue
             seen.add(iid)
+            # o = 這筆在頁面上的第幾個。網頁的預設排序照它走，才會跟來源站看到的一樣。
             rows.append({"id": iid, "c": category, "g": group, "n": name,
-                         "p": price, "k": coin})
+                         "p": price, "k": coin, "o": len(rows)})
             got = True
         # 同一個分類可能拆成好幾個 select，只記第一次出現的位置；
         # 整個 select 都沒解析出品項的話不算數
