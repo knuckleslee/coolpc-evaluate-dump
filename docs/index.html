@@ -377,11 +377,19 @@ function fillCategories(pool){
   if (CAT_VIEW === VIEW) return;
   CAT_VIEW = VIEW;
   const counts = new Map();
-  for (const it of pool) if (it.c) counts.set(it.c, (counts.get(it.c) || 0) + 1);
+  const first = new Map();   // 每個分類在來源站頁面上最早出現的位置
+  for (const it of pool){
+    if (!it.c) continue;
+    counts.set(it.c, (counts.get(it.c) || 0) + 1);
+    const o = ordOf(it);
+    if (o < (first.get(it.c) ?? Infinity)) first.set(it.c, o);
+  }
   const keep = $('#cat').value;
   if (keep && !counts.has(keep)) counts.set(keep, 0);
-  // 照來源站頁面上的順序排。排不到的（來源站已經改掉的舊分類名）擺到最後。
-  const rank = c => CAT_RANK.has(c) ? CAT_RANK.get(c) : CAT_RANK.size;
+  // 順序的三層依據：抓取記下的分類順序 → 該分類第一筆品項的位置 → 筆劃。
+  // 前兩層都來自來源站；第三層只在舊資料或來源站已經改掉的舊分類名才會用到。
+  const rank = c => CAT_RANK.has(c) ? CAT_RANK.get(c)
+                  : (first.get(c) ?? Infinity) + CAT_RANK.size;
   const cats = [...counts.keys()].sort((a,b) =>
     rank(a) - rank(b) || a.localeCompare(b,'zh-Hant'));
   $('#cat').innerHTML =
