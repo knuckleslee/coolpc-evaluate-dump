@@ -39,8 +39,14 @@ h1 span{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
   padding:6px 10px;line-height:1;display:none}
 #clear:focus-visible{outline:2px solid var(--accent)}
 
-.status{font-size:13px;color:var(--dim);margin:10px 0 0;font-variant-numeric:tabular-nums}
+.status{font-size:13px;color:var(--dim);margin:0;font-variant-numeric:tabular-nums}
 .status b{font-family:var(--mono);font-weight:500;color:var(--ink)}
+.statusbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 0}
+#refresh{padding:5px 11px;font:500 12.5px var(--sans);color:var(--accent);
+  background:var(--surface);border:1px solid var(--rule);border-radius:3px;cursor:pointer}
+#refresh:disabled{color:var(--dim);cursor:default}
+#refresh:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#run{font-size:12.5px;color:var(--accent)}
 
 nav{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--rule);
   overflow-x:auto;scrollbar-width:none}
@@ -81,6 +87,15 @@ nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .ck.all{font-weight:500;padding-bottom:6px;margin-bottom:4px;
   border-bottom:1px solid var(--rule)}
 .ck.zero .t{color:var(--dim)}
+.ck.one{width:auto;border:1px solid var(--rule);border-radius:3px;background:var(--bg)}
+
+/* 價格欄頂端的酷幣開關，靠右對齊價格欄 */
+.listhead{display:flex;justify-content:flex-end;align-items:center;
+  background:var(--surface);border:1px solid var(--rule);border-top:0;
+  padding:8px 14px;font:400 12.5px var(--sans);color:var(--dim)}
+.listhead label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.listhead input{margin:0;accent-color:var(--accent)}
+.listhead[hidden]{display:none}
 .chip{font:400 13px/1 var(--sans);color:var(--ink);background:var(--bg);
   border:1px solid var(--rule);border-radius:12px;padding:5px 10px;cursor:pointer;
   white-space:nowrap}
@@ -110,6 +125,7 @@ nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .tag{display:inline-block;font-size:11px;padding:0 5px;border-radius:2px;margin-left:6px;
   vertical-align:1px;border:1px solid currentColor}
 .tag.lowest{color:var(--down)} .tag.gone{color:var(--dim)} .tag.alias{color:var(--accent)}
+.tag.coin{color:var(--up)}
 
 .detail{background:var(--surface);border:1px solid var(--rule);border-top:0;padding:14px}
 .stats{display:flex;flex-wrap:wrap;gap:0 26px;font-size:13px;color:var(--dim);margin:0 0 10px}
@@ -144,7 +160,11 @@ footer a{color:var(--accent)}
            autocomplete="off" spellcheck="false" aria-label="搜尋品名">
     <button id="clear" type="button" aria-label="清除搜尋">×</button>
   </div>
-  <p class="status" id="status">載入中…</p>
+  <div class="statusbar">
+    <p class="status" id="status">載入中…</p>
+    <button id="refresh" type="button">立刻更新</button>
+    <a id="run" href="#" target="_blank" rel="noopener">重新抓取</a>
+  </div>
   <nav id="tabs" role="tablist">
     <button role="tab" data-view="all" aria-selected="true">全部</button>
     <button role="tab" data-view="changed" aria-selected="false">最近變價</button>
@@ -163,6 +183,9 @@ footer a{color:var(--accent)}
   <div id="facets"></div>
 </div>
 
+<div class="listhead" id="listhead" hidden>
+  <label><input type="checkbox" id="coin"> 價格折抵酷幣</label>
+</div>
 <ul id="list"></ul>
 <div class="msg" id="msg" hidden></div>
 <button id="more" type="button" hidden>顯示更多</button>
@@ -180,7 +203,7 @@ const $ = s => document.querySelector(s);
 // 品名開頭常掛活動標語：【八方來財】、[限組裝]、(0801-0810 92折優惠)、〈套裝搭購優惠〉。
 // 一律整段剝掉，直到剝出真正的品名為止；只挑關鍵字剝的話會漏掉大半，
 // 品牌就會變成「【華碩家用筆」這種被空白截斷的殘句。
-const LEAD_MARK = /^[\s　★◆▼※•↓~!！]+/;
+const LEAD_MARK = /^[\s　★◆▼※•↓~!！{}｛｝]+/;
 const LEAD_BRACKET = /^[【\[［（(〈<][^】\]］）)〉>]*[】\]］）)〉>]/;
 // 標語剝掉後常還剩「8/31前 買」「6/1~6/30購買」這種活動期間的字樣。
 // 日期只認 m/d 的寫法，不能一律吃掉數字，否則 1MORE 這類品牌會被咬掉。
@@ -200,12 +223,14 @@ function stripLead(s){
 
 function brandOf(name){
   const s = stripLead(name);
-  const first = s.split(/[\s　/、,，]/)[0] || '';
+  // 開頭殘留的符號要先去掉，否則會連著品牌一起被當成一個詞，
+  // 保底又只切 6 個字元，就成了「{Cherr」「{Couga」這種東西。
+  const first = (s.split(/[\s　/、,，]/)[0] || '').replace(/^[^\w\u4e00-\u9fff]+/, '');
   const zh = first.match(/^[\u4e00-\u9fff]+/);       // 「美光Micron」取「美光」
   if (zh && zh[0].length >= 2) return zh[0];
-  const en = first.match(/^[A-Za-z][A-Za-z\-.]*/);
+  const en = first.match(/^[A-Za-z0-9][A-Za-z0-9\-.]*/);   // 1MORE 這種數字開頭的也算
   if (en && en[0].length >= 2) return en[0].toUpperCase();
-  return zh ? zh[0] : (first.slice(0, 6) || '其他');
+  return zh ? zh[0] : (en ? en[0].toUpperCase() : '其他');
 }
 
 // 螢幕的介面代碼：〈2H1P1C〉= 2 個 HDMI + 1 個 DP + 1 個 USB-C
@@ -343,6 +368,7 @@ function autoLabel(cat, gi){
 }
 
 let CAT_VIEW = null;    // 分類選單是照哪個分頁建的
+let CAT_RANK = new Map();   // 分類 → 來源站頁面上的位置
 
 // 選單跟著分頁重建。品項的 c 存的是它最後一次被看到時的分類，來源站改過名的
 // 舊分類（例如「手機｜平板｜筆電｜穿戴」）只會留在改名前就下架的品項身上，
@@ -354,7 +380,10 @@ function fillCategories(pool){
   for (const it of pool) if (it.c) counts.set(it.c, (counts.get(it.c) || 0) + 1);
   const keep = $('#cat').value;
   if (keep && !counts.has(keep)) counts.set(keep, 0);
-  const cats = [...counts.keys()].sort((a,b) => a.localeCompare(b,'zh-Hant'));
+  // 照來源站頁面上的順序排。排不到的（來源站已經改掉的舊分類名）擺到最後。
+  const rank = c => CAT_RANK.has(c) ? CAT_RANK.get(c) : CAT_RANK.size;
+  const cats = [...counts.keys()].sort((a,b) =>
+    rank(a) - rank(b) || a.localeCompare(b,'zh-Hant'));
   $('#cat').innerHTML =
     `<option value="">全部分類（${NT(pool.length)}）</option>` +
     cats.map(c => `<option value="${esc(c)}">${esc(c)}（${NT(counts.get(c))}）</option>`).join('');
@@ -362,6 +391,21 @@ function fillCategories(pool){
 }
 
 let SUB_DOMAIN = [];        // 目前分類下所有次類，供全選計算用
+let COIN = false;           // 價格是否折抵酷幣
+let COIN_ONLY = false;      // 只看有酷幣的品項
+let HAS_COIN = false;       // 這批資料裡到底有沒有酷幣（舊資料沒有這個欄位）
+let HAS_ORDER = false;      // 有沒有來源站的排列順序（舊資料沒有這個欄位）
+
+// o 是這筆在來源站頁面上的位置。預設排序照它走，看到的順序才跟來源站一致。
+// 舊資料沒有 o，就退回原本的價格排序。
+const ordOf = it => typeof it.o === 'number' ? it.o : Infinity;
+const byOrder = (a,b) => HAS_ORDER ? ordOf(a) - ordOf(b) : netOf(a) - netOf(b);
+
+// 酷幣是結帳當下直接折抵的金額，所以只影響「現價」。歷史價格與最高最低都維持原價，
+// 因為過去每天的酷幣額度沒有被記錄下來，混著算會讓走勢圖對不上。
+// 折抵大於等於售價一定是資料有問題，當成沒有，免得畫面出現負數價格。
+const kOf = it => { const k = it.k || 0; return k > 0 && k < it.p ? k : 0; };
+const netOf = it => COIN ? it.p - kOf(it) : it.p;
 
 // 次類清單的內容取自「分頁＋分類」，不隨搜尋字變動——否則打字時整排會忽隱忽現。
 // 右邊的筆數才套用搜尋結果。
@@ -394,7 +438,16 @@ function renderSubs(domain, counted){
 
   const prev = box.querySelector('.checklist');
   const top = prev ? prev.scrollTop : 0;
-  box.innerHTML = '<div class="facet"><b>次類</b><div class="vals"><div class="checklist">' +
+  const nCoin = domain.filter(i => kOf(i) > 0).length;
+  const coinRow = nCoin
+    ? '<div class="facet"><b>酷幣</b><div class="vals">' +
+      `<label class="ck one"><input type="checkbox" data-coin-only` +
+      `${COIN_ONLY ? ' checked' : ''}>` +
+      `<span class="t">只看有酷幣</span><span class="n">${NT(nCoin)}</span></label>` +
+      '</div></div>'
+    : '';
+  box.innerHTML = coinRow +
+    '<div class="facet"><b>次類</b><div class="vals"><div class="checklist">' +
     `<label class="ck all"><input type="checkbox" data-all` +
     `${picked === SUB_DOMAIN.length ? ' checked' : ''}>` +
     `<span class="t">（全選）</span>` +
@@ -473,7 +526,7 @@ function sorterFor(key){
 }
 
 function anyFilter(){
-  return $('#cat').value || SUBS ||
+  return $('#cat').value || SUBS || COIN_ONLY ||
     Object.values(PICKED).some(s => s.size);
 }
 
@@ -481,27 +534,46 @@ let ITEMS = [], VIEW = 'all', SHOWN = 0, RESULT = [], OPEN = null;
 const PAGE = 120, shardCache = new Map();
 
 const base = location.pathname.replace(/[^/]*$/, '');
-$('#repo').href = 'https://github.com/' + location.hostname.split('.')[0] +
+const repoUrl = 'https://github.com/' + location.hostname.split('.')[0] +
   base.replace(/\/$/, '');
+$('#repo').href = repoUrl;
+$('#run').href = repoUrl + '/actions';
 
-fetch(base + 'data/facets.json')
-  .then(r => r.ok ? r.json() : {})
-  .then(m => { MINED = m; if (ITEMS.length){ applyMined(); render(); } })
-  .catch(() => {});
+let DATA_STAMP = null;      // 上一次載到的 updated 值，用來判斷有沒有新資料
 
-fetch(base + 'data/items.json')
-  .then(r => r.ok ? r.json() : Promise.reject(r.status))
-  .then(d => {
-    ITEMS = d.items;
-    buildAttrs();
-    $('#status').innerHTML =
-      `追蹤 <b>${NT(d.count)}</b> 項 · 資料更新於 <b>${d.updated}</b>`;
-    render();
-  })
-  .catch(e => {
-    $('#status').textContent = '資料還沒產生。到 GitHub 的 Actions 分頁手動跑一次抓取工作，' +
-      '完成後重新整理這一頁。（' + e + '）';
-  });
+// force=true 時在網址後面掛一個時間戳。GitHub Pages 會把 json 快取十分鐘左右，
+// 不繞開的話按了更新也只會拿到同一份舊檔案。
+async function loadData(force){
+  const bust = force ? '?t=' + Date.now() : '';
+  const [d, mined] = await Promise.all([
+    fetch(base + 'data/items.json' + bust)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    fetch(base + 'data/facets.json' + bust)
+      .then(r => r.ok ? r.json() : {}).catch(() => ({})),
+  ]);
+  const same = DATA_STAMP !== null && DATA_STAMP === d.updated;
+  DATA_STAMP = d.updated;
+  ITEMS = d.items;
+  // cats 是 2026-09 之後的抓取才會寫入的欄位。舊資料沒有就退回筆劃排序。
+  CAT_RANK = new Map((d.cats || []).map((c,i) => [c,i]));
+  // k 欄位是 2026-09 之後的抓取才有，舊資料沒有就整組不顯示
+  HAS_COIN = ITEMS.some(i => kOf(i) > 0);
+  HAS_ORDER = ITEMS.some(i => typeof i.o === 'number');
+  $('#listhead').hidden = !HAS_COIN;
+  MINED = mined;
+  buildAttrs();
+  shardCache.clear();       // 走勢圖的分片快取跟著換掉，否則展開看到的還是舊價格
+  CAT_VIEW = null;          // 分類選單照新資料重建
+  $('#status').innerHTML =
+    `追蹤 <b>${NT(d.count)}</b> 項 · 資料更新於 <b>${d.updated}</b>`;
+  render();
+  return same;
+}
+
+loadData(false).catch(e => {
+  $('#status').textContent = '資料還沒產生。到 GitHub 的 Actions 分頁手動跑一次抓取工作，' +
+    '完成後按「立刻更新」。（' + e + '）';
+});
 
 function score(item, terms){
   const hay = (item.n + ' ' + item.c + ' ' + item.g).toLowerCase();
@@ -524,13 +596,14 @@ function compute(){
   // 各層的選項數都統計「尚未套用該層篩選」的結果，避免勾選後其他選項歸零
   const searched = list => terms.length ? list.filter(i => score(i, terms) > 0) : list;
   renderSubs(out, searched(out));
+  if (cat && COIN_ONLY) out = out.filter(i => kOf(i) > 0);
   if (cat && SUBS) out = out.filter(i => SUBS.has(i.g || ''));
   renderFacets(searched(out));
   if (cat) out = out.filter(matchFacets);
 
   if (terms.length){
     out = out.map(i => [score(i, terms), i]).filter(x => x[0] > 0);
-    out.sort((a,b) => b[0]-a[0] || a[1].p-b[1].p);
+    out.sort((a,b) => b[0]-a[0] || byOrder(a[1], b[1]));
     out = out.map(x => x[1]);
   } else if (VIEW === 'changed'){
     out = [...out].sort((a,b) => b.pd.localeCompare(a.pd) ||
@@ -538,9 +611,9 @@ function compute(){
   } else if (VIEW === 'lowest' || VIEW === 'new'){
     out = [...out].sort((a,b) => b.pd.localeCompare(a.pd));
   } else if (VIEW === 'gone'){
-    out = [...out].sort((a,b) => b.l.localeCompare(a.l) || a.p - b.p);
+    out = [...out].sort((a,b) => b.l.localeCompare(a.l) || byOrder(a, b));
   } else {
-    out = [...out].sort((a,b) => a.p - b.p);
+    out = [...out].sort(byOrder);
   }
   $('#reset').hidden = !anyFilter();
   return out;
@@ -573,7 +646,9 @@ function rowEl(it){
   row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', 'false');
 
+  const k = kOf(it);
   let tags = '';
+  if (k) tags += `<span class="tag coin">${COIN ? '已折酷幣' : '酷幣'} ${NT(k)}</span>`;
   if (it.x) tags += `<span class="tag gone">已下架 ${it.l}</span>`;
   if (it.a && it.a.length) tags += `<span class="tag alias">改過名</span>`;
   else if (it.np > 1 && it.p <= it.lo) tags += '<span class="tag lowest">歷史低點</span>';
@@ -588,7 +663,7 @@ function rowEl(it){
 
   row.innerHTML =
     `<div class="name">${esc(it.n)}${tags}</div>` +
-    `<div class="price">$${NT(it.p)}</div>` +
+    `<div class="price">$${NT(netOf(it))}</div>` +
     `<div class="meta">${esc(it.c)}${it.g ? ' · ' + esc(it.g) : ''}</div>` +
     `<div class="delta">${delta}</div>`;
 
@@ -653,14 +728,17 @@ function detailHTML(it, series){
     `<div class="stats">` +
     `<span>最低<b>$${NT(it.lo)}</b></span>` +
     `<span>最高<b>$${NT(it.hi)}</b></span>` +
-    `<span>現價<b>$${NT(it.p)}</b></span>` +
+    `<span>現價<b>$${NT(netOf(it))}</b></span>` +
     `<span>${span}</span></div>`;
+  const coin = kOf(it)
+    ? `<div class="pts">酷幣可折 $${NT(kOf(it))}，折抵後 $${NT(it.p - kOf(it))}。` +
+      `走勢圖與最高最低價都是原價，酷幣額度沒有逐日記錄。</div>` : '';
   const alias = (it.a && it.a.length)
     ? `<div class="pts">曾用名：${it.a.map(esc).join('　／　')}</div>` : '';
   const warn = bad.size
     ? `<div class="pts warn">有 ${bad.size} 個價位暴衝後隨即回復，` +
       `多半是來源站當天標錯，圖上以空心點標示。</div>` : '';
-  return stats + chartSVG(series, it, bad) + warn +
+  return stats + chartSVG(series, it, bad) + coin + warn +
     `<div class="pts">${series.slice(-6).reverse()
       .map(p => `${p[0]} $${NT(p[1])}`).join('　')}</div>` + alias;
 }
@@ -735,9 +813,24 @@ $('#tabs').addEventListener('click', e => {
   render();
 });
 $('#more').addEventListener('click', () => render(false));
+$('#coin').addEventListener('change', e => { COIN = e.target.checked; render(); });
+$('#refresh').addEventListener('click', async () => {
+  const b = $('#refresh');
+  b.disabled = true;
+  b.textContent = '更新中…';
+  let msg;
+  try {
+    msg = await loadData(true) ? '沒有新資料' : '已更新';
+  } catch (e){
+    msg = '更新失敗';
+  }
+  b.textContent = msg;
+  setTimeout(() => { b.disabled = false; b.textContent = '立刻更新'; }, 2500);
+});
 $('#cat').addEventListener('change', () => {
   // 換分類時舊的次類與規格勾選都失效，一併清掉
   SUBS = null;
+  COIN_ONLY = false;
   for (const k of Object.keys(PICKED)) delete PICKED[k];
   EXPANDED.clear();
   render();
@@ -745,6 +838,11 @@ $('#cat').addEventListener('change', () => {
 $('#subs').addEventListener('change', e => {
   const cb = e.target.closest('input');
   if (!cb) return;
+  if (cb.hasAttribute('data-coin-only')){
+    COIN_ONLY = cb.checked;
+    render();
+    return;
+  }
   if (cb.hasAttribute('data-all')){
     SUBS = cb.checked ? null : new Set();
   } else {
@@ -772,6 +870,7 @@ $('#facets').addEventListener('click', e => {
 $('#reset').addEventListener('click', () => {
   $('#cat').value = '';
   SUBS = null;
+  COIN_ONLY = false;
   for (const k of Object.keys(PICKED)) delete PICKED[k];
   EXPANDED.clear();
   render();
