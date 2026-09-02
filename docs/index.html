@@ -66,6 +66,8 @@ nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
   border:1px solid var(--rule);border-radius:12px;padding:5px 10px;cursor:pointer;
   white-space:nowrap}
 .chip:hover{border-color:var(--accent)}
+.chip.wrap{white-space:normal;text-align:left;max-width:100%}
+#subs:empty,#facets:empty{display:none}
 .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .chip .n{opacity:.55;font-size:11px;margin-left:3px}
@@ -127,15 +129,16 @@ footer a{color:var(--accent)}
     <button role="tab" data-view="changed" aria-selected="false">最近變價</button>
     <button role="tab" data-view="lowest" aria-selected="false">目前歷史低點</button>
     <button role="tab" data-view="new" aria-selected="false">新上架</button>
+    <button role="tab" data-view="gone" aria-selected="false">已下架</button>
   </nav>
 </header>
 
 <div class="filters">
   <div class="selects">
     <select id="cat" aria-label="分類"><option value="">全部分類</option></select>
-    <select id="sub" aria-label="次類"><option value="">全部次類</option></select>
     <button id="reset" type="button" hidden>清除篩選</button>
   </div>
+  <div id="subs"></div>
   <div id="facets"></div>
 </div>
 
@@ -153,10 +156,29 @@ footer a{color:var(--accent)}
 const NT = n => n.toLocaleString('en-US');
 const $ = s => document.querySelector(s);
 // 從品名與次類抽出可篩選的規格。次類由來源站分好，比品名可靠，優先採用。
+// 品名開頭常掛活動標語：【八方來財】、[限組裝]、(0801-0810 92折優惠)、〈套裝搭購優惠〉。
+// 一律整段剝掉，直到剝出真正的品名為止；只挑關鍵字剝的話會漏掉大半，
+// 品牌就會變成「【華碩家用筆」這種被空白截斷的殘句。
+const LEAD_MARK = /^[\s　★◆▼※•↓~!！]+/;
+const LEAD_BRACKET = /^[【\[［（(〈<][^】\]］）)〉>]*[】\]］）)〉>]/;
+// 標語剝掉後常還剩「8/31前 買」「6/1~6/30購買」這種活動期間的字樣。
+// 日期只認 m/d 的寫法，不能一律吃掉數字，否則 1MORE 這類品牌會被咬掉。
+const LEAD_NOISE = /^(?:[+＋]|購買|買|\d{1,2}\/\d{1,2}(?:[~～-]\d{1,2}\/\d{1,2})?(?:前|止)?)/;
+
+function stripLead(s){
+  s = s.replace(LEAD_MARK, '');
+  for (let i = 0; i < 6; i++){
+    const m = s.match(LEAD_BRACKET) || s.match(LEAD_NOISE);
+    if (!m) break;
+    const rest = s.slice(m[0].length).replace(LEAD_MARK, '');
+    if (!rest) break;            // 整個品名就是一組括號，剝光反而沒東西可用
+    s = rest;
+  }
+  return s;
+}
+
 function brandOf(name){
-  let s = name.replace(/^[【\[（(]([^】\]）)]{1,6})[】\]）)]\s*/, (m, inner) =>
-    /狂|神罰|搭購|組合|任搭|限時|特價|下殺|超值|強打|爆殺|殺/.test(inner) ? '' : m);
-  s = s.replace(/^[\s★◆▼※•]+/, '');
+  const s = stripLead(name);
   const first = s.split(/[\s　/、,，]/)[0] || '';
   const zh = first.match(/^[\u4e00-\u9fff]+/);       // 「美光Micron」取「美光」
   if (zh && zh[0].length >= 2) return zh[0];
@@ -258,6 +280,8 @@ const FACET_DEFS = [
   ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
 ];
 const PICKED = {};          // {facet: Set(值)}
+const SUBS = new Set();     // 勾選中的次類，空的代表全部
+const SUB_KEY = '__sub';    // 次類在 EXPANDED 裡的鍵
 const EXPANDED = new Set(); // 哪幾組按了「更多」
 
 let MINED = {};    // {分類: [[值,…], …]}  由 scripts/facets.py 每次抓取後重算
@@ -302,18 +326,33 @@ function fillCategories(){
   const cats = [...new Set(ITEMS.filter(i => i.c).map(i => i.c))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
   $('#cat').insertAdjacentHTML('beforeend',
     cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join(''));
-  fillSubs();
 }
 
-function fillSubs(){
-  const cat = $('#cat').value;
-  const pool = cat ? ITEMS.filter(i => i.c === cat) : ITEMS;
-  const subs = [...new Set(pool.filter(i => i.g).map(i => i.g))]
-    .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
-  const keep = $('#sub').value;
-  $('#sub').innerHTML = '<option value="">全部次類</option>' +
-    subs.map(g => `<option value="${esc(g)}">${esc(shortSub(g))}</option>`).join('');
-  if (subs.includes(keep)) $('#sub').value = keep;
+const SUB_SHOWN = 12;
+
+// 次類為複選。沒有勾任何一項就等於全部，「全部」那顆的作用是把勾選清空。
+function renderSubs(pool){
+  const box = $('#subs');
+  if (!$('#cat').value){ box.innerHTML = ''; return; }
+  const counts = new Map();
+  for (const it of pool) if (it.g) counts.set(it.g, (counts.get(it.g) || 0) + 1);
+  const vals = [...counts.entries()];
+  for (const v of SUBS) if (!counts.has(v)) vals.push([v, 0]);
+  if (!vals.length){ box.innerHTML = ''; return; }
+  vals.sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0],'zh-Hant'));
+
+  const open = EXPANDED.has(SUB_KEY);
+  const shown = open ? vals : vals.slice(0, SUB_SHOWN);
+  box.innerHTML = '<div class="facet"><b>次類</b>' +
+    `<button class="chip" type="button" data-sub="" aria-pressed="${SUBS.size === 0}">` +
+    `全部<span class="n">${pool.length}</span></button>` +
+    shown.map(([v,n]) =>
+      `<button class="chip wrap" type="button" data-sub="${esc(v)}"` +
+      ` aria-pressed="${SUBS.has(v)}">${esc(shortSub(v))}<span class="n">${n}</span></button>`).join('') +
+    (vals.length > SUB_SHOWN
+      ? `<button class="morefacet" type="button" data-more="${SUB_KEY}">` +
+        (open ? '收合' : `更多 ${vals.length - SUB_SHOWN}`) + '</button>'
+      : '') + '</div>';
 }
 
 // 次類名稱常附帶保固說明，選單中略去
@@ -339,6 +378,8 @@ function activeDefs(){
 
 function renderFacets(pool){
   const box = $('#facets');
+  // 未選分類時規格面板沒有意義：品牌會列出幾百個、規格組跨分類混在一起。
+  if (!$('#cat').value){ box.innerHTML = ''; return; }
   const defs = activeDefs();
   const counts = {};
   for (const [key] of defs) counts[key] = new Map();
@@ -381,7 +422,7 @@ function sorterFor(key){
 }
 
 function anyFilter(){
-  return $('#cat').value || $('#sub').value ||
+  return $('#cat').value || SUBS.size ||
     Object.values(PICKED).some(s => s.size);
 }
 
@@ -420,18 +461,21 @@ function score(item, terms){
 
 function compute(){
   const terms = $('#q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const cat = $('#cat').value, sub = $('#sub').value;
+  const cat = $('#cat').value;
   let out = ITEMS;
-  if (VIEW === 'changed') out = out.filter(i => i.pv !== null && !i.x);
+  if (VIEW === 'all') out = out.filter(i => !i.x);
+  else if (VIEW === 'gone') out = out.filter(i => i.x);
+  else if (VIEW === 'changed') out = out.filter(i => i.pv !== null && !i.x);
   else if (VIEW === 'lowest') out = out.filter(i => !i.x && i.np > 1 && i.p <= i.lo);
   else if (VIEW === 'new') out = out.filter(i => !i.x && i.np === 1);
   if (cat) out = out.filter(i => i.c === cat);
-  if (sub) out = out.filter(i => i.g === sub);
 
-  // 規格面板統計未套用規格篩選的結果，避免勾選後選項數歸零
-  renderFacets(terms.length
-    ? out.filter(i => score(i, terms) > 0) : out);
-  out = out.filter(matchFacets);
+  // 各層的選項數都統計「尚未套用該層篩選」的結果，避免勾選後其他選項歸零
+  const searched = list => terms.length ? list.filter(i => score(i, terms) > 0) : list;
+  renderSubs(searched(out));
+  if (cat && SUBS.size) out = out.filter(i => SUBS.has(i.g));
+  renderFacets(searched(out));
+  if (cat) out = out.filter(matchFacets);
 
   if (terms.length){
     out = out.map(i => [score(i, terms), i]).filter(x => x[0] > 0);
@@ -442,6 +486,8 @@ function compute(){
       Math.abs(b.p-b.pv)/b.pv - Math.abs(a.p-a.pv)/a.pv);
   } else if (VIEW === 'lowest' || VIEW === 'new'){
     out = [...out].sort((a,b) => b.pd.localeCompare(a.pd));
+  } else if (VIEW === 'gone'){
+    out = [...out].sort((a,b) => b.l.localeCompare(a.l) || a.p - b.p);
   } else {
     out = [...out].sort((a,b) => a.p - b.p);
   }
@@ -637,11 +683,26 @@ $('#tabs').addEventListener('click', e => {
 });
 $('#more').addEventListener('click', () => render(false));
 $('#cat').addEventListener('change', () => {
-  $('#sub').value = '';
-  for (const k of Object.keys(PICKED)) if (k.startsWith('auto')) delete PICKED[k];
-  fillSubs(); render();
+  // 換分類時舊的次類與規格勾選都失效，一併清掉
+  SUBS.clear();
+  for (const k of Object.keys(PICKED)) delete PICKED[k];
+  EXPANDED.clear();
+  render();
 });
-$('#sub').addEventListener('change', () => render());
+$('#subs').addEventListener('click', e => {
+  const more = e.target.closest('[data-more]');
+  if (more){
+    EXPANDED.has(SUB_KEY) ? EXPANDED.delete(SUB_KEY) : EXPANDED.add(SUB_KEY);
+    render();
+    return;
+  }
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const v = chip.dataset.sub;
+  if (!v) SUBS.clear();
+  else SUBS.has(v) ? SUBS.delete(v) : SUBS.add(v);
+  render();
+});
 $('#facets').addEventListener('click', e => {
   const more = e.target.closest('[data-more]');
   if (more){
@@ -658,7 +719,8 @@ $('#facets').addEventListener('click', e => {
   render();
 });
 $('#reset').addEventListener('click', () => {
-  $('#cat').value = ''; $('#sub').value = ''; fillSubs();
+  $('#cat').value = '';
+  SUBS.clear();
   for (const k of Object.keys(PICKED)) delete PICKED[k];
   EXPANDED.clear();
   render();
