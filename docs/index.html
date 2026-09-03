@@ -56,6 +56,18 @@ h1 span{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
 .sortbtn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ranges{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 8px}
 #coinbox[hidden]{display:none}
+.headright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cfg{background:var(--surface);border:1px solid var(--rule);border-top:0;
+  padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+.cfg[hidden]{display:none}
+.cfg label{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--dim)}
+.cfg label input{flex:1 1 auto;min-width:0;padding:6px 9px;border:1px solid var(--rule);
+  border-radius:3px;background:var(--bg);color:var(--ink);
+  font:400 12.5px var(--mono)}
+.cfg label input:focus{outline:none;border-color:var(--accent)}
+.cfgfoot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.cfgpv{font:400 11.5px var(--mono);color:var(--dim);overflow-wrap:anywhere;min-width:0}
+.cfgnote{font-size:11.5px;color:var(--dim)}
 #run{font-size:12.5px;color:var(--accent)}
 
 nav{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--rule);
@@ -120,16 +132,23 @@ nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
   cursor:pointer;padding:5px 4px}
 #list{margin:0;padding:0;list-style:none}
 .row{background:var(--surface);border:1px solid var(--rule);border-top:0;
-  display:grid;grid-template-columns:1fr auto;gap:2px 14px;
+  display:grid;grid-template-columns:1fr auto auto;gap:2px 10px;
   padding:11px 14px;cursor:pointer;align-items:baseline}
 #list li:first-child .row{border-top:0}
 .row:hover{background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
 .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .name{font-size:14.5px;word-break:break-word}
+/* 比價：用完整的原始品名去搜尋，才找得到同一支貨 */
+.cmp{grid-column:3;grid-row:1;align-self:center;justify-self:end;text-decoration:none;
+  font:400 12px var(--sans);color:var(--dim);border:1px solid var(--rule);
+  border-radius:3px;padding:4px 9px;white-space:nowrap;line-height:1.5}
+.cmp:hover{color:var(--accent);border-color:var(--accent);background:var(--bg)}
+.cmp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .meta{grid-column:1;font-size:12px;color:var(--dim)}
-.price{grid-column:2;grid-row:1;font-family:var(--mono);font-size:16px;font-weight:500;
+.price{grid-column:2;grid-row:1;min-width:8ch;text-align:right;
+  font-family:var(--mono);font-size:16px;font-weight:500;
   text-align:right;white-space:nowrap}
-.delta{grid-column:2;grid-row:2;font-family:var(--mono);font-size:12px;text-align:right;
+.delta{grid-column:2/4;grid-row:2;font-family:var(--mono);font-size:12px;text-align:right;
   white-space:nowrap}
 .up{color:var(--up)} .down{color:var(--down)}
 .tag{display:inline-block;font-size:11px;padding:0 5px;border-radius:2px;margin-left:6px;
@@ -206,7 +225,22 @@ footer a{color:var(--accent)}
 
 <div class="listhead" id="listhead" hidden>
   <span class="sorts" id="sorts">排序</span>
-  <label id="coinbox" hidden><input type="checkbox" id="coin"> 價格折抵酷幣</label>
+  <span class="headright">
+    <label id="coinbox" hidden><input type="checkbox" id="coin"> 價格折抵酷幣</label>
+    <button class="sortbtn" id="cfgtoggle" type="button" aria-expanded="false">比價設定</button>
+  </span>
+</div>
+<div class="cfg" id="cfg" hidden>
+  <label>搜尋網址<input id="cfgurl" type="text" spellcheck="false" autocapitalize="off"></label>
+  <label>追加關鍵字<input id="cfgextra" type="text" spellcheck="false" autocapitalize="off"
+         placeholder="接在品名後面，例如：ECLIFE　或　-蝦皮"></label>
+  <label>捲動並標示<input id="cfgmark" type="text" spellcheck="false" autocapitalize="off"
+         placeholder="開啟後捲到這段文字，例如：EcLife（Firefox 不支援）"></label>
+  <div class="cfgfoot">
+    <span class="cfgpv" id="cfgpv"></span>
+    <button class="sortbtn" id="cfgreset" type="button">還原預設</button>
+  </div>
+  <div class="cfgnote">只存在這台裝置的瀏覽器，不會進 repo，換裝置要重設一次。</div>
 </div>
 <ul id="list"></ul>
 <div class="msg" id="msg" hidden></div>
@@ -709,6 +743,7 @@ async function loadData(force){
   return same;
 }
 
+loadSearchCfg();
 loadData(false).catch(e => {
   $('#status').textContent = '資料還沒產生。到 GitHub 的 Actions 分頁手動跑一次抓取工作，' +
     '完成後按「立刻更新」。（' + e + '）';
@@ -759,7 +794,8 @@ function compute(){
 }
 
 function renderRuns(){
-  for (const id of ['#filters','#listhead','#more']) $(id).hidden = true;
+  for (const id of ['#filters','#listhead','#more','#cfg']) $(id).hidden = true;
+  $('#cfgtoggle').setAttribute('aria-expanded','false');
   OPEN = null;
   const actions = $('#run').href;
   if (!RUNS.length){
@@ -812,6 +848,46 @@ function render(reset = true, all = false){
       : '這個分類目前沒有品項。累積幾天的資料後就會有內容。';
 }
 
+// 比價連結。用未經處理的原始品名——大括號、【限搭機】那些都留著，
+// 因為其他店家轉貼的字串常常一模一樣，整串下去反而更容易對到同一支貨。
+//
+// 這是預設值，網頁上「比價設定」改過的會存在瀏覽器裡蓋掉它（只在這台裝置）。
+// 常見的替代網址：
+//   Google 購物   https://www.google.com/search?tbm=shop&q=
+//   Bing          https://www.bing.com/search?q=
+//   DuckDuckGo    https://duckduckgo.com/?q=
+//   Yahoo 拍賣     https://tw.bid.yahoo.com/search/auction/product?p=
+const SEARCH_DEFAULT = { url: 'https://www.google.com/search?q=', extra: '', mark: '' };
+const SEARCH_KEY = 'pt.search';
+let SEARCH = { ...SEARCH_DEFAULT };
+
+function loadSearchCfg(){
+  try {
+    const raw = localStorage.getItem(SEARCH_KEY);
+    if (raw) SEARCH = { ...SEARCH_DEFAULT, ...JSON.parse(raw) };
+  } catch (e){ /* 無痕視窗讀不到，就用預設值 */ }
+}
+
+function saveSearchCfg(){
+  try {
+    // 跟預設一樣就不留東西在瀏覽器裡
+    if (SEARCH.url === SEARCH_DEFAULT.url && !SEARCH.extra && !SEARCH.mark)
+      localStorage.removeItem(SEARCH_KEY);
+    else localStorage.setItem(SEARCH_KEY, JSON.stringify(SEARCH));
+  } catch (e){}
+}
+
+// 追加關鍵字接在整串品名後面，用空白隔開。
+// mark 是瀏覽器的文字片段（#:~:text=）：開啟後自動捲到那段文字並標示，
+// 由瀏覽器自己完成，我們不需要、也不可能去碰對方頁面的內容。
+// Chrome／Edge／Safari 支援，Firefox 會安靜忽略。
+// 「-」和「,」在片段語法裡有特殊意義，先去掉免得整段失效。
+const searchURL = n => {
+  const q = SEARCH.url + encodeURIComponent(SEARCH.extra ? n + ' ' + SEARCH.extra : n);
+  const mark = (SEARCH.mark || '').replace(/[-,]/g, ' ').trim();
+  return mark ? q + '#:~:text=' + encodeURIComponent(mark) : q;
+};
+
 function rowEl(it){
   const li = document.createElement('li');
   const row = document.createElement('div');
@@ -838,11 +914,17 @@ function rowEl(it){
   row.innerHTML =
     `<div class="name">${esc(showName(it.n))}${tags}</div>` +
     `<div class="price">$${NT(netOf(it))}</div>` +
+    `<a class="cmp" href="${esc(searchURL(it.n))}" target="_blank" rel="noopener"` +
+    ` title="用完整品名到 Google 搜尋，開新分頁">比價</a>` +
     `<div class="meta">${esc(it.c)}${it.g ? ' · ' + esc(it.g) : ''}</div>` +
     `<div class="delta">${delta}</div>`;
 
   const toggle = () => openDetail(li, row, it);
-  row.addEventListener('click', toggle);
+  // 按比價不要順便把那一列展開
+  row.addEventListener('click', e => {
+    if (e.target.closest('.cmp')) return;
+    toggle();
+  });
   row.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
   });
@@ -1024,6 +1106,38 @@ $('#tabs').addEventListener('click', e => {
 });
 $('#more').addEventListener('click', () => render(false, true));
 $('#coin').addEventListener('change', e => { COIN = e.target.checked; render(); });
+
+// 比價設定。輸入時只更新預覽，離開欄位才重畫清單——每敲一個字就重畫太浪費。
+function syncCfg(){
+  $('#cfgurl').value = SEARCH.url;
+  $('#cfgextra').value = SEARCH.extra;
+  $('#cfgmark').value = SEARCH.mark;
+  const sample = '｛技嘉 B850M DS3H｝M-ATX/2.5G';
+  $('#cfgpv').textContent = '預覽：' + decodeURIComponent(searchURL(sample));
+}
+$('#cfgtoggle').addEventListener('click', () => {
+  const box = $('#cfg'), open = box.hidden;
+  box.hidden = !open;
+  $('#cfgtoggle').setAttribute('aria-expanded', String(open));
+  if (open) syncCfg();
+});
+for (const id of ['#cfgurl', '#cfgextra', '#cfgmark']){
+  $(id).addEventListener('input', () => {
+    SEARCH.url = $('#cfgurl').value.trim() || SEARCH_DEFAULT.url;
+    SEARCH.extra = $('#cfgextra').value.trim();
+    SEARCH.mark = $('#cfgmark').value.trim();
+    saveSearchCfg();
+    $('#cfgpv').textContent =
+      '預覽：' + decodeURIComponent(searchURL('｛技嘉 B850M DS3H｝M-ATX/2.5G'));
+  });
+  $(id).addEventListener('change', () => render());
+}
+$('#cfgreset').addEventListener('click', () => {
+  SEARCH = { ...SEARCH_DEFAULT };
+  saveSearchCfg();
+  syncCfg();
+  render();
+});
 $('#list').addEventListener('click', async e => {
   const c = e.target.closest('[data-copy]');
   if (c){
