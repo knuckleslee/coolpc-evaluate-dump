@@ -233,14 +233,19 @@ footer a{color:var(--accent)}
 <div class="cfg" id="cfg" hidden>
   <label>搜尋網址<input id="cfgurl" type="text" spellcheck="false" autocapitalize="off"></label>
   <label>追加關鍵字<input id="cfgextra" type="text" spellcheck="false" autocapitalize="off"
-         placeholder="接在品名後面，例如：ECLIFE　或　-蝦皮"></label>
+         placeholder="接在品名後面，例如店名；前面加 - 可排除"></label>
   <label>捲動並標示<input id="cfgmark" type="text" spellcheck="false" autocapitalize="off"
-         placeholder="開啟後捲到這段文字，例如：EcLife（Firefox 不支援）"></label>
+         placeholder="開啟後捲到這段文字；用逗號分兩段＝標示範圍（Firefox 不支援）"></label>
   <div class="cfgfoot">
     <span class="cfgpv" id="cfgpv"></span>
     <button class="sortbtn" id="cfgreset" type="button">還原預設</button>
   </div>
-  <div class="cfgnote">只存在這台裝置的瀏覽器，不會進 repo，換裝置要重設一次。</div>
+  <div class="cfgnote">只存在這台裝置的瀏覽器，不會進 repo，換裝置要重設一次。<br>
+    「捲動並標示」要填<b>只會出現在搜尋結果裡</b>的字。填成跟追加關鍵字一樣的字，
+    會停在頁面頂端的搜尋框——那裡也有同一段文字，而片段抓的是第一個出現的位置。<br>
+    要標的東西每筆都不一樣（例如售價）時，用逗號分成兩段當範圍：
+    <b>起點,終點</b>，瀏覽器會把兩者之間整段圈起來，售價夾在中間就跟著被標到。
+    兩個錨點請挑每一筆都會出現的固定字樣。</div>
 </div>
 <ul id="list"></ul>
 <div class="msg" id="msg" hidden></div>
@@ -856,7 +861,8 @@ function render(reset = true, all = false){
 //   Google 購物   https://www.google.com/search?tbm=shop&q=
 //   Bing          https://www.bing.com/search?q=
 //   DuckDuckGo    https://duckduckgo.com/?q=
-//   Yahoo 拍賣     https://tw.bid.yahoo.com/search/auction/product?p=
+// 想直接搜某家店的站內搜尋也可以，把那家店的搜尋網址填進「比價設定」就行，
+// 不必寫在這裡——這個 repo 是公開的，店名留在程式碼裡沒有必要。
 const SEARCH_DEFAULT = { url: 'https://www.google.com/search?q=', extra: '', mark: '' };
 const SEARCH_KEY = 'pt.search';
 let SEARCH = { ...SEARCH_DEFAULT };
@@ -881,11 +887,25 @@ function saveSearchCfg(){
 // mark 是瀏覽器的文字片段（#:~:text=）：開啟後自動捲到那段文字並標示，
 // 由瀏覽器自己完成，我們不需要、也不可能去碰對方頁面的內容。
 // Chrome／Edge／Safari 支援，Firefox 會安靜忽略。
-// 「-」和「,」在片段語法裡有特殊意義，先去掉免得整段失效。
+//
+// 完整語法是 text=[前綴-,]起點[,終點][,-後綴]，用逗號分段：
+//   起點          捲到第一個出現的位置
+//   起點,終點      先找到起點，再往下找最近的終點，中間整段圈起來。
+//                 想標的東西每筆都不同（例如售價）就靠這招夾住它。
+//   前綴-,起點     前綴要緊貼在起點前面，用來指定是哪一個
+//   起點,-後綴     後綴要緊貼在起點後面，同上
+// 段落內部的「-」編碼成 %2D，才不會被誤認成上面那兩個標記。
 const searchURL = n => {
   const q = SEARCH.url + encodeURIComponent(SEARCH.extra ? n + ' ' + SEARCH.extra : n);
-  const mark = (SEARCH.mark || '').replace(/[-,]/g, ' ').trim();
-  return mark ? q + '#:~:text=' + encodeURIComponent(mark) : q;
+  const raw = (SEARCH.mark || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 4);
+  const parts = raw.map((t, i) => {
+    const pre = i === 0 && raw.length > 1 && t.endsWith('-');
+    const suf = i === raw.length - 1 && raw.length > 1 && t.startsWith('-');
+    const body = pre ? t.slice(0, -1) : suf ? t.slice(1) : t;
+    const enc = encodeURIComponent(body).replace(/-/g, '%2D');
+    return pre ? enc + '-' : suf ? '-' + enc : enc;
+  }).filter(t => t && t !== '-');
+  return parts.length ? q + '#:~:text=' + parts.join(',') : q;
 };
 
 function rowEl(it){
@@ -1112,7 +1132,7 @@ function syncCfg(){
   $('#cfgurl').value = SEARCH.url;
   $('#cfgextra').value = SEARCH.extra;
   $('#cfgmark').value = SEARCH.mark;
-  const sample = '｛技嘉 B850M DS3H｝M-ATX/2.5G';
+  const sample = '｛品牌 型號-ABC｝規格/規格';
   $('#cfgpv').textContent = '預覽：' + decodeURIComponent(searchURL(sample));
 }
 $('#cfgtoggle').addEventListener('click', () => {
@@ -1128,7 +1148,7 @@ for (const id of ['#cfgurl', '#cfgextra', '#cfgmark']){
     SEARCH.mark = $('#cfgmark').value.trim();
     saveSearchCfg();
     $('#cfgpv').textContent =
-      '預覽：' + decodeURIComponent(searchURL('｛技嘉 B850M DS3H｝M-ATX/2.5G'));
+      '預覽：' + decodeURIComponent(searchURL('｛品牌 型號-ABC｝規格/規格'));
   });
   $(id).addEventListener('change', () => render());
 }
