@@ -67,7 +67,9 @@ h1 span{color:var(--dim);font-weight:400;font-size:14px;margin-left:8px}
 .cfg label input:focus{outline:none;border-color:var(--accent)}
 .cfgfoot{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .cfgpv{font:400 11.5px var(--mono);color:var(--dim);overflow-wrap:anywhere;min-width:0}
-.cfgnote{font-size:11.5px;color:var(--dim)}
+.cfgnote{font-size:11.5px;color:var(--dim);line-height:1.85}
+.cfgnote b{color:var(--ink);font-weight:500}
+.cfgsub{padding-left:6em}
 #run{font-size:12.5px;color:var(--accent)}
 
 nav{display:flex;gap:4px;margin:18px 0 0;border-bottom:1px solid var(--rule);
@@ -241,11 +243,9 @@ footer a{color:var(--accent)}
     <button class="sortbtn" id="cfgreset" type="button">還原預設</button>
   </div>
   <div class="cfgnote">只存在這台裝置的瀏覽器，不會進 repo，換裝置要重設一次。<br>
-    「捲動並標示」要填<b>只會出現在搜尋結果裡</b>的字。填成跟追加關鍵字一樣的字，
-    會停在頁面頂端的搜尋框——那裡也有同一段文字，而片段抓的是第一個出現的位置。<br>
-    要標的東西每筆都不一樣（例如售價）時，用逗號分成兩段當範圍：
-    <b>起點,終點</b>，瀏覽器會把兩者之間整段圈起來，售價夾在中間就跟著被標到。
-    兩個錨點請挑每一筆都會出現的固定字樣。</div>
+    <b>追加關鍵字</b>：可填寫特定的網站名稱<br>
+    <b>捲動並標示</b>：自動捲至搜尋結果的特定文字<br>
+    <span class="cfgsub">抓第一個出現的位置，支援範圍選取（起點,終點）</span></div>
 </div>
 <ul id="list"></ul>
 <div class="msg" id="msg" hidden></div>
