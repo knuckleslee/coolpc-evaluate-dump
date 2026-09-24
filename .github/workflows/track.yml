@@ -2,13 +2,15 @@ name: 抓取價格
 
 on:
   schedule:
-    # timezone 是 2026-03 才有的欄位，可以直接寫台灣時間，不必自己減 8 小時。
-    # 萬一 GitHub 忽略這個欄位，10:05 會變成 UTC 的 10:05，也就是台灣的 18:05——
-    # 只是時間跑掉，不會壞掉。跑第一次後到 Actions 確認實際觸發時間。
-    - cron: '5 10 * * *'
-      timezone: 'Asia/Taipei'
-    - cron: '5 22 * * *'
-      timezone: 'Asia/Taipei'
+    # 台灣時間每天 10:30 到 22:30，每小時第 30 分，一天 13 次。
+    #
+    # 這裡刻意寫 UTC、不用 timezone 欄位：實際紀錄顯示 timezone: 'Asia/Taipei'
+    # 沒有照預期生效——舊排程寫 10:05／22:05，卻一直在台灣時間凌晨兩點多和
+    # 下午三點左右觸發，22:05 那次從來沒出現過。UTC 寫法沒有這種不確定性。
+    #
+    # 台灣 = UTC+8，所以台灣 10:30～22:30 ＝ UTC 02:30～14:30。
+    # 選第 30 分是避開整點：GitHub 每個整點負載最高，排程最容易延遲或被丟掉。
+    - cron: '30 2-14 * * *'
   workflow_dispatch:        # 讓你可以在網頁上手動按一下就跑
     inputs:
       rollback:
@@ -43,6 +45,8 @@ jobs:
         env:
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
           REDACT_WORDS: ${{ secrets.REDACT_WORDS }}
+          # 沒設定就只把通知內容印在紀錄裡，不會報錯
+          CHAT_WEBHOOK: ${{ secrets.CHAT_WEBHOOK }}
         run: python scripts/scrape.py
 
       - name: 把某一次抓取當作沒發生過
