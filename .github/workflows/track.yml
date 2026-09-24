@@ -3,13 +3,11 @@ name: 抓取價格
 on:
   schedule:
     # 台灣時間每天 10:30 到 22:30，每小時第 30 分，一天 13 次。
+    # cron 一律以 UTC 解讀，台灣 = UTC+8，所以台灣 10:30～22:30 ＝ UTC 02:30～14:30。
+    # 不使用 timezone 欄位，避免換算方式有任何不確定。
     #
-    # 這裡刻意寫 UTC、不用 timezone 欄位：實際紀錄顯示 timezone: 'Asia/Taipei'
-    # 沒有照預期生效——舊排程寫 10:05／22:05，卻一直在台灣時間凌晨兩點多和
-    # 下午三點左右觸發，22:05 那次從來沒出現過。UTC 寫法沒有這種不確定性。
-    #
-    # 台灣 = UTC+8，所以台灣 10:30～22:30 ＝ UTC 02:30～14:30。
-    # 選第 30 分是避開整點：GitHub 每個整點負載最高，排程最容易延遲或被丟掉。
+    # 注意：GitHub 的排程只保證「盡量」，實測這個 repo 會延遲好幾個小時才觸發。
+    # 詳見 README 的「排程時間」。
     - cron: '30 2-14 * * *'
   workflow_dispatch:        # 讓你可以在網頁上手動按一下就跑
     inputs:
@@ -39,7 +37,7 @@ jobs:
       - name: 安裝套件
         run: pip install -r requirements.txt
 
-      # 排程觸發時 github.event.inputs 是空的，這個條件會成立，照常抓取
+      # 排程觸發時沒有 rollback 輸入，手動觸發時留空，這兩種情況都照常抓取
       - name: 抓取並解析
         if: github.event.inputs.rollback == ''
         env:
