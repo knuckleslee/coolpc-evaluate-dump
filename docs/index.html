@@ -319,6 +319,11 @@ function portsOf(name){
 
 function attrsOf(it){
   const n = it.n, g = it.g || '', a = {};
+  const cat = it.c || '';
+  const KB = /鍵盤/.test(cat);          // 鍵盤+鼠｜搖桿｜桌+椅
+  const MS = /滑鼠/.test(cat);          // 滑鼠｜鼠墊｜數位板
+  const NET = /分享器/.test(cat);       // IP分享器｜網卡｜網通設備
+  const UPS = /UPS/.test(cat);          // UPS不斷電｜印表機｜掃描
   a.brand = [brandOf(n)];
 
   // 尺寸與解析度來自次類，例如「27吋(2560*1440)(4K 16:9)」
@@ -381,11 +386,25 @@ function attrsOf(it){
   if (/\bA[-.\s]?RGB\b/i.test(n)) feat.push('ARGB');
   else if (/\bRGB\b/i.test(n)) feat.push('RGB');
   if (/插拔/.test(n)) feat.push('熱插拔');
+  if (UPS){
+    if (/模擬正弦波/.test(n)) feat.push('模擬正弦波');
+    if (/純正弦波/.test(n)) feat.push('純正弦波');
+    if (/自動穩壓/.test(n)) feat.push('自動穩壓');
+    if (/突波/.test(n)) feat.push('突波保護');   // 突波保護／市電突波保護功能／突波、雷擊防護
+    if (/雷擊/.test(n)) feat.push('雷擊防護');
+  }
+  if (KB || MS){
+    if (/\b8K\b/i.test(n)) feat.push('8K');   // 鍵鼠是回報率，螢幕的 4K 是解析度，不能混
+    if (/\b4K\b/i.test(n)) feat.push('4K');
+    if (/\bMac\b/i.test(n)) feat.push('MAC');
+  }
   if (/智慧螢幕|Google\s?TV|Airplay/i.test(n)) feat.push('智慧螢幕');
   if (/Thunderbolt|\bTB[45]\b/i.test(n)) feat.push('Thunderbolt');
   if (/麥克風/.test(n)) feat.push('麥克風');
-  // 高更新率螢幕常有「4K-160Hz／FHD-320Hz 切換」這種雙模式
-  if (/切換|雙模式/.test(n)) feat.push('解析度切換');
+  // 高更新率螢幕的「4K-160Hz／FHD-320Hz 切換」雙模式。要求同一個斜線段落裡
+  // 同時出現更新率，否則繪圖板的「左右手可切換」、滑鼠的「切換3台裝置」都會中。
+  if (n.split('/').some(t => /\d+\s?Hz/i.test(t) && /切換|雙模式/.test(t)))
+    feat.push('解析度切換');
   if (feat.length) a.feat = feat;
 
   // 連線方式。三模的品名會同時寫出有線／無線／藍牙，所以三種都給，
@@ -396,7 +415,96 @@ function attrsOf(it){
   if (/無線/.test(n)) conn.push('無線');
   if (/有線/.test(n)) conn.push('有線');
   if (/藍[牙芽]/.test(n)) conn.push('藍牙');
+  if (/2\.4\s?G/i.test(n)) conn.push('2.4G');
+  if (/\bBolt\b/i.test(n)) conn.push('Bolt');          // 羅技的接收器規格
+  if (/Unifying/i.test(n)) conn.push('Unifying');
+  if (/\bOmni\b/i.test(n)) conn.push('Omni');
   if (conn.length) a.conn = conn;
+
+  if (UPS){
+    // VA 與 W 常寫在第一個斜線之前（Eaton 5E1000LV 1000VA/600W 在線互動式），
+    // 所以整串掃。數字要緊貼單位，型號裡的字母才不會被當成單位。
+    const va = [...n.matchAll(/(\d+)\s?VA\b/gi)].map(m => m[1] + 'VA');
+    if (va.length) a.va = [...new Set(va)];
+    const wc = [...n.matchAll(/(\d+)\s?W\b/gi)].map(m => m[1] + 'W');
+    if (wc.length) a.wcap = [...new Set(wc)];
+
+    // 切換方式。「在線互動式」要先比，否則會被「在線式」的規則搶走。
+    const sw2 = /在線互動/.test(n) ? '在線互動'
+              : /離線式/.test(n) ? '離線式'
+              : /在線式/.test(n) ? '在線式' : '';
+    if (sw2) a.ups = [sw2];
+  }
+
+  if (NET){
+    // 這個分類的規格包在括號或【】裡，不是用斜線分段，所以整串掃而不切段。
+    // 世代：AC／AX／AXE／BE 是速率代號的前綴，跟 Wi-Fi 5/6/6E/7 是同一件事，
+    // 一律換算成 Wi-Fi 世代。不然「AX3000 / Wi-Fi 6」會長出兩個意思相同的選項，
+    // 而只寫 AX1800 沒寫 Wi-Fi 6 的機種又篩不到。
+    const WIFI = { AC:'Wi-Fi 5', AX:'Wi-Fi 6', AXE:'Wi-Fi 6E', BE:'Wi-Fi 7' };
+    const gen = [], wrate = [];
+    for (const m of n.matchAll(/\b(AXE|AX|AC|BE)\s?(\d{3,5})\b/gi)){
+      gen.push(WIFI[m[1].toUpperCase()]);
+      wrate.push(m[2]);              // 前綴後面的數字就是無線速率
+    }
+    for (const m of n.matchAll(/Wi-?Fi\s?([45678])(E?)\b/gi))
+      gen.push('Wi-Fi ' + m[1] + m[2].toUpperCase());
+    if (gen.length) a.gen = [...new Set(gen)];
+    if (wrate.length) a.wrate = [...new Set(wrate)];
+
+    // 有線速率。Gb 不限數字；M 只認乙太網路的 10／100／1000，
+    // 否則行動熱點的 300Mbps、線材的 40m 都會被當成有線速率。
+    // 「10/100Mbps」要先取走，否則後面那輪會再把 100Mbps 當成獨立的一筆。
+    const lr = [];
+    const rest = n.replace(/\b(\d+)\/(\d+)\s?Mbps\b/gi,
+      (_, a, b) => { lr.push(a + '/' + b + 'M'); return ' '; });
+    for (const m of rest.matchAll(/\b(\d+(?:\.\d+)?)\s?(Gbps|Gb)\b/gi)) lr.push(m[1] + 'Gb');
+    for (const m of rest.matchAll(/\b(10|100|1000)\s?(Mbps|M)\b/g)) lr.push(m[1] + 'M');
+    if (lr.length) a.lrate = [...new Set(lr)];
+
+    // 孔數。【5埠】是總孔數的寫法，有的話只採它；
+    // 同一個品名裡的「含7埠 PoE+」「4埠 PoE+」是子集，不是總數。
+    const boxed = n.match(/【\s*(\d+)\s*埠\s*】/);
+    const ports = boxed ? [boxed[1]]
+      : [...n.matchAll(/(\d+)\s?埠/g)].map(m => m[1]);
+    if (ports.length) a.ports = [...new Set(ports)].map(v => v + '埠');
+  }
+
+  if (MS){
+    // DPI 取斜線段落裡的「數字＋DPI」，不取整段。來源站大小寫不一致
+    //（8000Dpi 與 8000dpi 並存），還有夾帶贈品說明的（8000Dpi(贈…接收器)），
+    // 整段收下來同一個規格會散成好幾個選項。
+    const dpi = [];
+    for (const seg of n.split('/').slice(1)){
+      const m = seg.match(/(\d{3,6})\s?dpi/i);
+      if (m) dpi.push(m[1] + 'DPI');
+    }
+    if (dpi.length) a.dpi = [...new Set(dpi)];
+  }
+
+  // 以下幾組只對鍵盤那個分類成立。百分比、中文、4K 這些字在別的分類
+  // 是完全不同的意思（效率 90%、4K 解析度），不綁分類就會到處亂長。
+  if (KB){
+    // 配列：來源站寫成 75%、96%，或 TKL。型號裡的數字（例如 OK-M-75）
+    // 不會中，因為一定要跟著百分比符號。
+    const layout = [];
+    for (const m of n.matchAll(/(\d{2,3})\s?%/g)) layout.push(m[1] + '%');
+    if (/\bTKL\b/i.test(n)) layout.push('TKL');
+    if (layout.length) a.layout = [...new Set(layout)];
+
+    const lang = [];
+    if (/中文/.test(n)) lang.push('中文');
+    if (/英文/.test(n)) lang.push('英文');
+    if (lang.length) a.lang = lang;
+
+    // 軸體：取被斜線夾住的段落中含「軸」字的那些。第一段是品名本身
+    // （「分離式磁軸電競鍵盤 有線」這種），不算在內。
+    const sw = n.split('/').slice(1)
+      .map(t => t.trim())
+      .filter(t => t.includes('軸') && t.length <= 12);
+    if (sw.length) a.sw = [...new Set(sw)];
+
+  }
 
   // 顏色。來源站大量存在同型號不同色的品項，而且常帶修飾詞
   //（熔岩紅、冰川銀、太空灰、幻潮黑）。一律歸到最後那個顏色字，
@@ -435,7 +543,10 @@ const FACET_DEFS = [
   ['brand','品牌'], ['size','尺寸'], ['res','解析度'], ['tier','等級'],
   ['ratio','比例'], ['panel','面板'], ['curve','曲率'], ['hz','更新率'],
   ['port','連接介面'], ['portn','介面數量'], ['hdr','HDR'],
-  ['conn','連線'], ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
+  ['conn','連接'], ['dpi','DPI'], ['layout','配列'], ['sw','軸體'], ['lang','語言'],
+  ['gen','世代'], ['wrate','無線速率'], ['lrate','有線速率'], ['ports','有線孔數'],
+  ['va','電池容量'], ['wcap','可用容量'], ['ups','切換方式'],
+  ['feat','特性'], ['color','顏色'], ['cap','容量'], ['warranty','保固'],
 ];
 const PICKED = {};          // {facet: Set(值)}
 let SUBS = null;            // 勾選中的次類。null 代表全勾，沒動過
@@ -690,6 +801,18 @@ function sorterFor(key){
     return (a,b) => (+a[0].slice(3) || 0) - (+b[0].slice(3) || 0);
   if (key === 'portn') // 同一種介面的各種數量要排在一起
     return (a,b) => a[0].localeCompare(b[0], 'zh-Hant');
+  if (key === 'layout') // 60% 到 100% 照尺寸排，TKL 沒有數字，擺最後
+    return (a,b) => (parseInt(a[0]) || 999) - (parseInt(b[0]) || 999);
+  if (key === 'dpi' || key === 'wrate' || key === 'ports' ||
+      key === 'va' || key === 'wcap')
+    return (a,b) => parseInt(a[0]) - parseInt(b[0]);   // 照數值排，不照筆數
+  if (key === 'gen')
+    return (a,b) => parseFloat(a[0].slice(6)) - parseFloat(b[0].slice(6)) ||
+                    a[0].localeCompare(b[0]);
+  if (key === 'lrate'){  // 100M 要排在 1Gb 前面，換算成同一個單位再比
+    const mb = v => parseFloat(v.split('/').pop()) * (/Gb/.test(v) ? 1000 : 1);
+    return (a,b) => mb(a[0]) - mb(b[0]);
+  }
   if (key === 'hz'){
     const ord = ['100Hz 以下','100–119Hz','120–164Hz','165–239Hz','240Hz 以上'];
     return (a,b) => ord.indexOf(a[0]) - ord.indexOf(b[0]);
@@ -810,24 +933,39 @@ function renderRuns(){
     return;
   }
   $('#msg').hidden = true;
-  const rows = [...RUNS].reverse().map(r => {
-    const ren = (r.renamed || []).length
-      ? `<div class="ren">改名接續：${r.renamed.map(x =>
+  // 一天抓 13 次、保留 90 天，逐次列會有上千列；而且還原是以「天」為單位，
+  // 所以一天併成一列，底下列出當天每一次的時間與數字。
+  const days = new Map();
+  for (const r of RUNS){
+    if (!days.has(r.date)) days.set(r.date, []);
+    days.get(r.date).push(r);
+  }
+  const rows = [...days.entries()].sort((a,b) => b[0].localeCompare(a[0])).map(([date, rs]) => {
+    rs.sort((a,b) => (a.at || '').localeCompare(b.at || ''));
+    const sum = k => rs.reduce((t, r) => t + (r[k] || 0), 0);
+    const ren = rs.flatMap(r => r.renamed || []);
+    const times = rs.map(r =>
+      `${esc((r.at || '').slice(11))} 新增${NT(r.added)} 變價${NT(r.changed)} 下架${NT(r.gone)}`
+    ).join('　');
+    const renHtml = ren.length
+      ? `<div class="ren">改名接續：${ren.map(x =>
           esc(showName(x[1])) + ' → ' + esc(showName(x[2]))).join('；')}</div>` : '';
     return '<li><div class="run">' +
-      `<div class="d">${esc(r.date)}</div>` +
-      `<div class="s">${esc(r.at || '')} · 解析 ${NT(r.parsed)} 筆` +
-      ` · 新增 ${NT(r.added)} · 變價 ${NT(r.changed)} · 下架 ${NT(r.gone)}` +
-      `${(r.renamed || []).length ? ' · 改名 ' + r.renamed.length : ''}</div>` +
+      `<div class="d">${esc(date)}</div>` +
+      `<div class="s">抓取 ${rs.length} 次 · 新增 ${NT(sum('added'))}` +
+      ` · 變價 ${NT(sum('changed'))} · 下架 ${NT(sum('gone'))}` +
+      `${ren.length ? ' · 改名 ' + ren.length : ''}</div>` +
       `<div class="r"><button class="sortbtn" type="button"` +
-      ` data-copy="${esc(r.date)}">複製日期</button></div>` + ren +
+      ` data-copy="${esc(date)}">複製日期</button></div>` +
+      `<div class="ren">${times}</div>` + renHtml +
       '</div></li>';
   }).join('');
   $('#list').innerHTML =
     '<li><div class="howto">要把某一次當作沒發生過：複製它的日期，' +
     `到 <a href="${actions}" target="_blank" rel="noopener">Actions → 抓取價格</a>，` +
     '按 Run workflow，把日期貼進<b>要當作沒抓過的日期</b>那一欄再執行。<br>' +
-    '會刪掉當天寫入的價格點、當天才出現的品項，並還原當天的改名。' +
+    '會把<b>那一整天</b>（全部 13 次）一起當作沒發生：刪掉當天的價格點、當天才出現的品項，並還原當天的改名。' +
+    '歷史只記到日期，沒辦法只刪某一個小時。' +
     '下架標記不會動，下次抓取會自己重新判定。</div></li>' + rows;
 }
 
