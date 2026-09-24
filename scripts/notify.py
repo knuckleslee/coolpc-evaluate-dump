@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """把一次抓取的變化整理成清單，推送到 Google Chat。
 
+    價格變化    跌價在前（跌最多的排最前面），漲價在後
     上架       新出現的品項，以及之前下架、這次又回來的
     下架       這次沒出現、之前還在架上的
-    價格變化    跌價在前（跌最多的排最前面），漲價在後
+
+清單一律完整列出，不截斷。Chat 每則訊息上限 32,000 bytes，超過就自動拆成
+好幾則，全部回在同一個討論串裡，中間間隔一秒（每個 space 每秒最多寫入一則）。
 
 Webhook 網址放在 repository secret「CHAT_WEBHOOK」。沒設定就只把訊息印在
 Actions 的紀錄裡，不會報錯——所以先上線、之後再接 Chat 也可以。
@@ -14,11 +17,12 @@ Actions 的紀錄裡，不會報錯——所以先上線、之後再接 Chat 也
 
 import os
 import re
+import time
 
 import requests
 
 WEBHOOK = os.environ.get("CHAT_WEBHOOK", "")
-PER_SECTION = 15        # 每一區最多列幾筆，超過的只報數量
+MAX_BYTES = 24000       # 官方上限 32,000 bytes，留餘裕給標題與格式符號
 NAME_LEN = 42           # 品名截斷長度，手機上一行大約就這麼寬
 
 
@@ -42,20 +46,14 @@ def nt(v: int) -> str:
     return f"${v:,}"
 
 
-def section(title: str, lines: list[str]) -> list[str]:
-    if not lines:
-        return []
-    out = [f"*{title}*"]
-    out += lines[:PER_SECTION]
-    if len(lines) > PER_SECTION:
-        out.append(f"…另外 {len(lines) - PER_SECTION} 筆")
-    return out + [""]
-
-
-def build(at: str, added, gone, changed) -> str | None:
-    """組出訊息文字。三區都沒東西就回 None，代表這次不必發。"""
-    if not (added or gone or changed):
-        return None
+def sections(added, gone, changed):
+    """三區的內容，順序就是訊息裡的順序：變價、上架、下架。"""
+    def pct(o, n):
+        return (n - o) / o * 100 if o else 0
+    drops = sorted((c for c in changed if c[2] < c[1]), key=lambda c: pct(c[1], c[2]))
+    rises = sorted((c for c in changed if c[2] > c[1]), key=lambda c: -pct(c[1], c[2]))
+    moves = [f"{'▼' if n < o else '▲'} {short(name)}　{nt(o)} → {nt(n)}（{pct(o, n):+.1f}%）"
+             for name, o, n in drops + rises]
 
     up = []
     for n, p, info in added:
@@ -65,47 +63,85 @@ def build(at: str, added, gone, changed) -> str | None:
         up.append(f"• {short(n)}　{nt(p)}{tag}")
 
     down = [f"• {short(n)}　最後 {nt(p)}" for n, p in gone]
+    return [("價格變化", moves), ("上架", up), ("下架", down)]
 
-    # 跌價在前、跌最多的最前面；漲價在後、漲最多的最前面
-    def pct(o, n):
-        return (n - o) / o * 100 if o else 0
-    drops = sorted((c for c in changed if c[2] < c[1]), key=lambda c: pct(c[1], c[2]))
-    rises = sorted((c for c in changed if c[2] > c[1]), key=lambda c: -pct(c[1], c[2]))
-    moves = [f"{'▼' if n < o else '▲'} {short(name)}　{nt(o)} → {nt(n)}（{pct(o, n):+.1f}%）"
-             for name, o, n in drops + rises]
 
-    head = [f"*價格更新 {at}*",
-            f"上架 {len(added)}・下架 {len(gone)}・變價 {len(changed)}", ""]
-    body = section("上架", up) + section("下架", down) + section("價格變化", moves)
+def summary(added, gone, changed) -> str:
+    return f"變價 {len(changed)}・上架 {len(added)}・下架 {len(gone)}"
+
+
+def build(at: str, added, gone, changed) -> str | None:
+    """整份內容合成一則（印在紀錄裡、測試用）。三區都沒東西就回 None。"""
+    msgs = split(at, added, gone, changed)
+    return "\n\n".join(msgs) if msgs else None
+
+
+def split(at: str, added, gone, changed) -> list[str]:
+    """組出要送出的訊息。內容一律完整，太長就拆成多則，每則都在上限之內。"""
+    if not (added or gone or changed):
+        return []
+    size = lambda t: len(t.encode("utf-8"))
+    # 每則的標題與結尾預留空間，剩下的給清單
+    budget = MAX_BYTES - 400
+
+    chunks, cur, used, title = [], [], 0, None
+    for sec, lines in sections(added, gone, changed):
+        if not lines:
+            continue
+        for i, line in enumerate([f"*{sec}*"] + lines + [""]):
+            if used + size(line) + 1 > budget and cur:
+                chunks.append(cur)
+                cur, used = [], 0
+                # 新的一則從某一區中間開始，補上「（續）」讓人知道這是哪一區
+                if 0 < i <= len(lines):
+                    cont = f"*{sec}（續）*"
+                    cur.append(cont); used += size(cont) + 1
+            cur.append(line); used += size(line) + 1
+    if cur:
+        chunks.append(cur)
+
+    n = len(chunks)
     url = site_url()
-    tail = [f"<{url}|看完整清單>"] if url else []
-    return "\n".join(head + body + tail).rstrip()
+    out = []
+    for k, body in enumerate(chunks, 1):
+        head = f"*價格更新 {at}*" + (f"（{k}/{n}）" if n > 1 else "")
+        lines = [head]
+        if k == 1:
+            lines += [summary(added, gone, changed), ""]
+        lines += body
+        if k == n and url:
+            lines.append(f"<{url}|看完整清單>")
+        out.append("\n".join(lines).rstrip())
+    return out
 
 
 def send(at: str, added, gone, changed) -> None:
-    text = build(at, added, gone, changed)
-    if text is None:
-        print("這次沒有上架、下架或變價，不發通知")
+    msgs = split(at, added, gone, changed)
+    if not msgs:
+        print("這次沒有變價、上架或下架，不發通知")
         return
     if not WEBHOOK:
-        print("沒有設定 CHAT_WEBHOOK，以下是會送出的內容：\n" + text)
+        print("沒有設定 CHAT_WEBHOOK，以下是會送出的內容：\n" + "\n\n".join(msgs))
         return
     # 同一天的訊息回在同一串。REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD：
     # 串還不存在時（當天第一則）自動開新串。
     sep = "&" if "?" in WEBHOOK else "?"
     url = WEBHOOK + sep + "messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-    body = {"text": text, "thread": {"threadKey": "price-" + at[:10]}}
-    # 錯誤訊息一律不能帶到網址。公開 repo 的 Actions 紀錄任何人都看得到，
-    # 而 requests 的連線錯誤會把網址拆成主機與路徑分開印出，GitHub 的自動遮罩
-    # 只認得完整的 secret 字串，比對不到，key 與 token 就會原樣外流。
-    # 所以只回報錯誤類型；from None 讓原本的例外（含網址）不會跟著印出來。
-    try:
-        r = requests.post(url, json=body, timeout=20)
-    except requests.RequestException as e:
-        raise RuntimeError(f"連不上 Chat（{type(e).__name__}）") from None
-    if r.status_code >= 300:
-        raise RuntimeError(f"Chat 回應 {r.status_code}：{scrub(r.text[:200])}")
-    print(f"已推送到 Chat（上架 {len(added)}、下架 {len(gone)}、變價 {len(changed)}）")
+    for k, text in enumerate(msgs):
+        if k:
+            time.sleep(1.1)          # 每個 space 每秒最多寫入一則
+        body = {"text": text, "thread": {"threadKey": "price-" + at[:10]}}
+        # 錯誤訊息一律不能帶到網址。公開 repo 的 Actions 紀錄任何人都看得到，
+        # 而 requests 的連線錯誤會把網址拆成主機與路徑分開印出，GitHub 的自動遮罩
+        # 只認得完整的 secret 字串，比對不到，key 與 token 就會原樣外流。
+        # 所以只回報錯誤類型；from None 讓原本的例外（含網址）不會跟著印出來。
+        try:
+            r = requests.post(url, json=body, timeout=20)
+        except requests.RequestException as e:
+            raise RuntimeError(f"連不上 Chat（{type(e).__name__}）") from None
+        if r.status_code >= 300:
+            raise RuntimeError(f"Chat 回應 {r.status_code}：{scrub(r.text[:200])}")
+    print(f"已推送到 Chat，共 {len(msgs)} 則（{summary(added, gone, changed)}）")
 
 
 def scrub(text: str) -> str:

@@ -228,7 +228,7 @@ footer a{color:var(--accent)}
 <div class="listhead" id="listhead" hidden>
   <span class="sorts" id="sorts">排序</span>
   <span class="headright">
-    <label id="coinbox" hidden><input type="checkbox" id="coin"> 價格折抵酷幣</label>
+    <label id="coinbox" hidden><input type="checkbox" id="coin" checked> 價格折抵酷幣</label>
     <button class="sortbtn" id="cfgtoggle" type="button" aria-expanded="false">比價設定</button>
   </span>
 </div>
@@ -623,7 +623,7 @@ function fillCategories(pool){
 }
 
 let SUB_DOMAIN = [];        // 目前分類下所有次類，供全選計算用
-let COIN = false;           // 價格是否折抵酷幣
+let COIN = true;            // 價格是否折抵酷幣（預設折抵）
 let COIN_ONLY = false;      // 只看有酷幣的品項
 let HAS_COIN = false;       // 這批資料裡到底有沒有酷幣（舊資料沒有這個欄位）
 let HAS_ORDER = false;      // 有沒有來源站的排列順序（舊資料沒有這個欄位）
@@ -644,7 +644,8 @@ const showName = n => n
 
 // 排序。四個鍵一律定義成「由小到大」，方向另外用 SORT_DIR 控制。
 // 日期在「已下架」看的是最後出現日，其他分頁看的是變價日。
-const dateOf = it => (VIEW === 'gone' ? it.l : it.pd) || '';
+// 一天抓 13 次，同一天的變價要靠時間 t 分先後。沒有 t 的舊資料排在當天最前面。
+const dateOf = it => VIEW === 'gone' ? (it.l || '') : (it.pd || '') + ' ' + (it.t || '');
 const SORT_KEYS = {
   src:   byOrder,
   name:  (a,b) => a.n.localeCompare(b.n, 'zh-Hant'),
@@ -871,7 +872,6 @@ async function loadData(force){
   return same;
 }
 
-loadSearchCfg();
 loadData(false).catch(e => {
   $('#status').textContent = '資料還沒產生。到 GitHub 的 Actions 分頁手動跑一次抓取工作，' +
     '完成後按「立刻更新」。（' + e + '）';
@@ -1006,10 +1006,14 @@ const SEARCH_KEY = 'pt.search';
 let SEARCH = { ...SEARCH_DEFAULT };
 
 function loadSearchCfg(){
-  try {
-    const raw = localStorage.getItem(SEARCH_KEY);
-    if (raw) SEARCH = { ...SEARCH_DEFAULT, ...JSON.parse(raw) };
-  } catch (e){ /* 無痕視窗讀不到，就用預設值 */ }
+  // try 只包住瀏覽器儲存那一行：無痕視窗會在那裡丟錯。
+  // 以前整段都包在 try 裡，連程式本身的錯誤也一起吞掉，設定讀取失敗了卻沒有任何跡象。
+  let raw = null;
+  try { raw = localStorage.getItem(SEARCH_KEY); } catch (e){ return; }
+  if (!raw) return;
+  let saved;
+  try { saved = JSON.parse(raw); } catch (e){ return; }   // 存壞的就當沒存
+  if (saved && typeof saved === 'object') SEARCH = { ...SEARCH_DEFAULT, ...saved };
 }
 
 function saveSearchCfg(){
@@ -1020,6 +1024,9 @@ function saveSearchCfg(){
     else localStorage.setItem(SEARCH_KEY, JSON.stringify(SEARCH));
   } catch (e){}
 }
+
+// 必須在 SEARCH_DEFAULT／SEARCH_KEY／SEARCH 宣告之後才呼叫
+loadSearchCfg();
 
 // 追加關鍵字接在整串品名後面，用空白隔開。
 // mark 是瀏覽器的文字片段（#:~:text=）：開啟後自動捲到那段文字並標示，
@@ -1066,7 +1073,7 @@ function rowEl(it){
     const d = it.p - it.pv, cls = d > 0 ? 'up' : 'down';
     const pct = (d / it.pv * 100).toFixed(1);
     delta = `<span class="${cls}">${d > 0 ? '▲' : '▼'}${NT(Math.abs(d))}` +
-            ` (${d > 0 ? '+' : ''}${pct}%) ${it.pd.slice(5)}</span>`;
+            ` (${d > 0 ? '+' : ''}${pct}%) ${it.pd.slice(5)}${it.t ? ' ' + it.t : ''}</span>`;
   }
 
   row.innerHTML =

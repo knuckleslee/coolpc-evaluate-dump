@@ -96,11 +96,14 @@ def rollback(date: str, dry_run: bool = False) -> int:
         if not series:
             continue                 # 這次抓取沒碰到、也沒有歷史的，維持原狀
         prices = [p for _, p in series]
+        old_pd = it.get("pd")
         it["p"] = prices[-1]
         it["pv"] = prices[-2] if len(prices) > 1 else None
         it["pd"] = series[-1][0]
         it["f"] = series[0][0]
         it["lo"], it["hi"], it["np"] = min(prices), max(prices), len(prices)
+        if it["pd"] != old_pd:
+            it.pop("t", None)       # 變價日退回更早的日子，當時是幾點已經無從得知
         if it.get("l") == date:
             # 最後出現日退回上一次抓取；沒有紀錄就退回最後一次變價日（近似值，
             # 下次抓取會蓋掉）

@@ -196,6 +196,7 @@ def dump_lines(path: Path, header: dict, key: str, records) -> None:
 def main() -> None:
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+    hhmm = now[11:]         # 變價發生在幾點幾分，網頁顯示成「09-24 14:30」
 
     if identity_module._STORE is None:
         print("警告：沒有設定 REDACT_WORDS，來源站名稱不會被遮蔽", file=sys.stderr)
@@ -264,7 +265,7 @@ def main() -> None:
         if prev is None:
             added += 1
             ev_added.append((row["n"], row["p"], None))
-            row.update(pv=None, pd=today, f=today, l=today, x=0, a=[])
+            row.update(pv=None, pd=today, f=today, l=today, x=0, a=[], t=hhmm)
             series.append([today, row["p"]])
             touched.add(iid[:2])
         else:
@@ -280,6 +281,9 @@ def main() -> None:
                 x=0,
                 a=aliases[-5:],
             )
+            # t＝最近一次變價是幾點。價格沒變就沿用上一次的
+            if prev.get("t"):
+                row["t"] = prev["t"]
             if prev.get("x"):
                 # 之前被標成下架、這次又出現了。每小時抓一次時，來源站臨時改表
                 # 造成的短暫消失會很常見，得明確列出來，不然只會看到「下架」卻不知道它回來了。
@@ -303,6 +307,12 @@ def main() -> None:
                 # 前價與變價日一律由歷史推回來，同一天改來改去才不會錯位
                 row["pv"] = series[-2][1] if len(series) >= 2 else None
                 row["pd"] = series[-1][0] if series else today
+                if row["pd"] == today:
+                    row["t"] = hhmm
+                else:
+                    # 當天改回前一天的價格：變價日退回更早的日子，
+                    # 那一天是幾點已經被今天早上覆蓋掉了，只好不顯示時間
+                    row.pop("t", None)
 
         # 歷史最低／最高價，讓列表不必載入歷史就能標出「目前是低點」
         seen_prices = [p for _, p in series]
