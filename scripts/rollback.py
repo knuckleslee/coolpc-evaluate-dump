@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""把某一次抓取當作沒發生過。
+"""把某一天的抓取當作沒發生過。
+
+一天會抓 13 次（10:30 到 22:30 每小時一次），這裡是以「天」為單位還原——
+歷史只記到日期，沒辦法只刪某一個小時的那一次。
 
     python scripts/rollback.py 2026-09-04
     python scripts/rollback.py 2026-09-04 --dry-run     # 只看會動到什麼，不寫檔
@@ -39,10 +42,13 @@ def rollback(date: str, dry_run: bool = False) -> int:
     known = {i["id"]: i for i in items_doc["items"]}
 
     runs_doc = load_json(DATA / "runs.json", {"schema": 1, "runs": []})
-    rec = next((r for r in runs_doc["runs"] if r["date"] == date), None)
+    # 一天最多抓 13 次，這一天的每一次都要一起還原。
+    # 歷史只記到「日」，沒辦法只刪某一個小時的那次。
+    recs = sorted((r for r in runs_doc["runs"] if r["date"] == date),
+                  key=lambda r: r.get("at", ""))
     prev = None
     for r in runs_doc["runs"]:
-        if r["date"] < date and (prev is None or r["date"] > prev["date"]):
+        if r["date"] < date and (prev is None or r.get("at", "") > prev.get("at", "")):
             prev = r
 
     shards = load_shards()
@@ -71,8 +77,10 @@ def rollback(date: str, dry_run: bool = False) -> int:
 
     # 3. 還原當天的改名。反向處理，同一筆若被改過多次才不會錯位。
     renamed_back, rename_miss = 0, 0
-    if rec:
-        for iid, old_name, new_name in reversed(rec.get("renamed", [])):
+    # 由當天最後一次往前還原，同一筆在同一天被改名兩次才會一路退回最早的名字
+    all_renames = [x for r in recs for x in r.get("renamed", [])]
+    if recs:
+        for iid, old_name, new_name in reversed(all_renames):
             it = known.get(iid)
             if it is None or it["n"] != new_name:
                 rename_miss += 1     # 之後又被改過，這裡不硬改回去
@@ -100,7 +108,8 @@ def rollback(date: str, dry_run: bool = False) -> int:
 
     print(f"刪除價格點 {dropped_pts} 個")
     print(f"刪除品項 {len(removed)} 筆（歷史只剩那一天）")
-    if rec:
+    if recs:
+        print(f"這一天有 {len(recs)} 次抓取紀錄，一併還原")
         print(f"還原改名 {renamed_back} 筆" +
               (f"，{rename_miss} 筆之後又被改過、保持現狀" if rename_miss else ""))
     else:
@@ -114,7 +123,7 @@ def rollback(date: str, dry_run: bool = False) -> int:
     if dry_run:
         print("\n--dry-run，沒有寫入任何檔案。")
         return 0
-    if dropped_pts == 0 and not removed and not rec:
+    if dropped_pts == 0 and not removed and not recs:
         raise SystemExit(f"{date} 沒有留下任何可刪的痕跡，什麼都沒做。")
 
     items = sorted(known.values(), key=lambda i: (i["c"], i["g"], i["n"]))

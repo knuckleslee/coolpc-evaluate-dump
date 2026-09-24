@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from facets import build as build_facets
 import identity as identity_module
+import notify
 from identity import bare, item_id, redact, relink
 
 # 抓取目標。放在環境變數裡，公開的程式碼就不必寫死是哪一家。
@@ -31,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "docs" / "data"
 HIST = DATA / "hist"
 TZ = timezone(timedelta(hours=8))
+KEEP_DAYS = 90          # runs.json 保留幾天的抓取紀錄（一天 13 次，全部留）
 
 HEADERS = {
     "User-Agent": (
@@ -204,6 +206,7 @@ def main() -> None:
 
     old = load_json(DATA / "items.json", {"items": []})
     known = {i["id"]: i for i in old.get("items", [])}
+    known_before = len(known)
 
     # 品名（含曾用名）對應到編號。改名只需認一次，之後就靠這張表穩定對上。
     name_index = {}
@@ -248,6 +251,8 @@ def main() -> None:
     # 改名有兩種：配對接續換 id，以及品名微調但 id 不變。兩種都會寫入曾用名，
     # 都得記下來，否則之後要「當作沒抓過這次」時還原不回去。
     rename_log = []
+    # 這次抓取的變化，給 Chat 通知用
+    ev_added, ev_gone, ev_changed = [], [], []
     for row in resolved:
         iid = row["_id"] or rename_map.get(row["id"]) or row["id"]
         del row["_id"]
@@ -258,6 +263,7 @@ def main() -> None:
 
         if prev is None:
             added += 1
+            ev_added.append((row["n"], row["p"], None))
             row.update(pv=None, pd=today, f=today, l=today, x=0, a=[])
             series.append([today, row["p"]])
             touched.add(iid[:2])
@@ -274,12 +280,29 @@ def main() -> None:
                 x=0,
                 a=aliases[-5:],
             )
+            if prev.get("x"):
+                # 之前被標成下架、這次又出現了。每小時抓一次時，來源站臨時改表
+                # 造成的短暫消失會很常見，得明確列出來，不然只會看到「下架」卻不知道它回來了。
+                ev_added.append((row["n"], row["p"],
+                                 prev["p"] if prev["p"] != row["p"] else "back"))
             if prev["p"] != row["p"]:
                 changed += 1
-                row["pv"] = prev["p"]
-                row["pd"] = today
-                series.append([today, row["p"]])
+                if not prev.get("x"):      # 重新上架的已經列在上架區，不重複列
+                    ev_changed.append((row["n"], prev["p"], row["p"]))
+                # 歷史只記到「日」。同一天第二次以後的變價，改寫當天那個點，
+                # 不要再新增：一天抓 13 次，否則同一天會疊出好幾個點，
+                # 變價次數灌水，標錯價的偵測（用日期當鍵）也會撞在一起。
+                if series and series[-1][0] == today:
+                    series[-1] = [today, row["p"]]
+                    # 當天又改回前一天的價格，這個點就等於沒變過
+                    if len(series) >= 2 and series[-2][1] == row["p"]:
+                        series.pop()
+                else:
+                    series.append([today, row["p"]])
                 touched.add(iid[:2])
+                # 前價與變價日一律由歷史推回來，同一天改來改去才不會錯位
+                row["pv"] = series[-2][1] if len(series) >= 2 else None
+                row["pd"] = series[-1][0] if series else today
 
         # 歷史最低／最高價，讓列表不必載入歷史就能標出「目前是低點」
         seen_prices = [p for _, p in series]
@@ -295,6 +318,7 @@ def main() -> None:
         if iid not in live and not item.get("x"):
             item["x"] = 1
             gone += 1
+            ev_gone.append((item["n"], item["p"]))
 
     items = sorted(known.values(), key=lambda i: (i["c"], i["g"], i["n"]))
     dump_lines(
@@ -321,14 +345,18 @@ def main() -> None:
     # 下架標記也不必記：下次抓取會重新判定，還在架上的會自己改回來。
     # 只有改名接續非記不可——它把品名換掉了，沒有日期，
     # 而且下次抓取會用新品名再對回同一筆，錯誤的接續會一直黏著解不開。
+    # 一天抓 13 次，每一次都要留下來——以前是「同一天只留最後一次」，
+    # 那樣早上的改名紀錄會被晚上蓋掉，之後就還原不了。
+    # 保留期間以「天」算：最近 90 天內的全部留著。
     runs = load_json(DATA / "runs.json", {"schema": 1, "runs": []})
-    runs["runs"] = [r for r in runs["runs"] if r["date"] != today]
+    runs["runs"] = [r for r in runs["runs"] if r.get("at") != now]
     runs["runs"].append({
         "date": today, "at": now, "parsed": len(rows),
         "added": added, "changed": changed,
         "gone": gone, "renamed": rename_log,
     })
-    runs["runs"] = runs["runs"][-90:]      # 只留最近 90 次，免得檔案無限長大
+    cutoff = (datetime.now(TZ) - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
+    runs["runs"] = [r for r in runs["runs"] if r["date"] > cutoff]
     (DATA / "runs.json").write_text(
         json.dumps(runs, ensure_ascii=False, separators=(",", ":")) + "\n",
         encoding="utf-8",
@@ -353,6 +381,16 @@ def main() -> None:
     )
 
     print(f"新增 {added} 筆、變價 {changed} 筆、改名接續 {len(renamed)} 筆、下架 {gone} 筆")
+
+    # 通知放在最後：資料都已經寫好了。通知失敗絕對不能讓整個程式以錯誤結束，
+    # 否則後面的 commit 步驟不會執行，這次抓到的資料就白費了。
+    if not known_before:
+        print("第一次抓取，全部品項都算新上架，不發通知")
+        return
+    try:
+        notify.send(now, ev_added, ev_gone, ev_changed)
+    except Exception as e:                  # noqa: BLE001
+        print(f"警告：Chat 通知失敗，資料已照常存檔（{e}）", file=sys.stderr)
 
 
 if __name__ == "__main__":
