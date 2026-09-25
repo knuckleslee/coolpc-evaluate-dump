@@ -1,14 +1,15 @@
 name: 抓取價格
 
 on:
-  schedule:
-    # 台灣時間每天 10:30 到 22:30，每小時第 30 分，一天 13 次。
-    # cron 一律以 UTC 解讀，台灣 = UTC+8，所以台灣 10:30～22:30 ＝ UTC 02:30～14:30。
-    # 不使用 timezone 欄位，避免換算方式有任何不確定。
-    #
-    # 注意：GitHub 的排程只保證「盡量」，實測這個 repo 會延遲好幾個小時才觸發。
-    # 詳見 README 的「排程時間」。
-    - cron: '30 2-14 * * *'
+  # ── GitHub 內建排程：已關閉，程式保留 ──
+  # 現在改由 Google Apps Script 每小時呼叫下面的 workflow_dispatch 觸發（apps-script/trigger.gs）。
+  # 關掉的原因：內建排程在這個 repo 大部分時段直接被丟掉，跑的那幾次也晚好幾個小時，
+  # 而且常落在半夜。
+  #
+  # 要恢復：把下面兩行最前面的「# 」拿掉（schedule 要跟 workflow_dispatch 對齊）。
+  # cron 以 UTC 解讀，'30 2-14 * * *' ＝ 台灣時間 10:30～22:30 每小時一次。
+  # schedule:
+  #   - cron: '30 2-14 * * *'
   workflow_dispatch:        # 讓你可以在網頁上手動按一下就跑
     inputs:
       rollback:
@@ -37,7 +38,7 @@ jobs:
       - name: 安裝套件
         run: pip install -r requirements.txt
 
-      # 排程觸發時沒有 rollback 輸入，手動觸發時留空，這兩種情況都照常抓取
+      # Apps Script 觸發與手動觸發時 rollback 都是空字串，照常抓取
       - name: 抓取並解析
         if: github.event.inputs.rollback == ''
         env:
