@@ -170,6 +170,17 @@ svg.chart{width:100%;height:150px;display:block;overflow:visible}
 .pts{margin:8px 0 0;font-size:12.5px;color:var(--dim);font-family:var(--mono)}
 .pts.warn{font-family:var(--sans);color:var(--up)}
 .chart .dot.bad{stroke:var(--dim);stroke-dasharray:2 2;fill:var(--bg)}
+/* 懸停：吸附到最近的一次變價，拉垂直線、標實心點、浮出說明 */
+.chartwrap{position:relative;touch-action:pan-y;cursor:crosshair}
+.chart .hair{stroke:var(--dim);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.hdot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 2px var(--surface);pointer-events:none}
+.tip{position:absolute;z-index:5;pointer-events:none;white-space:nowrap;
+  background:var(--surface);color:var(--ink);border:1px solid var(--rule);border-radius:4px;
+  box-shadow:0 2px 8px rgba(0,0,0,.18);padding:6px 9px;font:400 12px/1.55 var(--mono)}
+.tip b{font-weight:600;font-size:13px}
+.tip .dn{color:var(--down)} .tip .up{color:var(--up)} .tip .dim{color:var(--dim)}
+.hdot[hidden],.tip[hidden]{display:none}
 
 .msg{padding:40px 14px;text-align:center;color:var(--dim);font-size:14px}
 .run{background:var(--surface);border:1px solid var(--rule);border-top:0;
@@ -1116,6 +1127,7 @@ async function openDetail(li, row, it){
     const series = await loadHistory(it.id);
     OPEN_IT = it; OPEN_SERIES = series;
     box.innerHTML = detailHTML(it, series);
+    bindChart(box);
   } catch (e){
     box.innerHTML = '<div class="pts">讀不到這項的歷史資料（' + e + '）</div>';
   }
@@ -1192,13 +1204,67 @@ function detailHTML(it, series){
       `多半是來源站當天標錯，圖上以空心點標示。</div>` : '';
   const quiet = (series.length > 1 && win.pts.length < 2)
     ? `<div class="pts">這個區間內沒有變過價。</div>` : '';
-  return stats + rangeBar() + chartSVG(win, it, bad, series.length) + quiet + coin + warn +
+  return stats + rangeBar() + chartSVG(win, it, bad, series) + quiet + coin + warn +
     `<div class="pts">${series.slice(-6).reverse()
-      .map(p => `${p[0]} $${NT(p[1])}`).join('　')}</div>` + alias;
+      .map((p, i) => `${p[0]}${i === 0 && it.t && it.pd === p[0] ? ' ' + it.t : ''} $${NT(p[1])}`)
+      .join('　')}</div>` + alias;
 }
 
-function chartSVG(win, it, bad, fullLen){
+// 懸停說明的文字。只看資料不碰畫面，方便測試。
+function tipHTML(h, endDay){
+  const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
+  let chg;
+  if (h.pv == null) chg = '<span class="dim">第一筆紀錄</span>';
+  else {
+    const dv = h.p - h.pv, pct = h.pv ? (dv / h.pv * 100).toFixed(1) : '0.0';
+    chg = dv === 0 ? '<span class="dim">價格未變</span>'
+        : `<span class="${dv < 0 ? 'dn' : 'up'}">${dv < 0 ? '▼' : '▲'}${NT(Math.abs(dv))}` +
+          ` (${dv > 0 ? '+' : ''}${pct}%)</span>`;
+  }
+  const n = h.u ? days(h.d, h.u) : days(h.d, endDay);
+  const keep = h.u ? `維持 ${n} 天` : n > 0 ? `維持至今（${n} 天）` : '今天剛變價';
+  return `${h.d}${h.t ? ' ' + h.t : ''}<br><b>$${NT(h.p)}</b>　${chg}` +
+    `<br><span class="dim">${keep}</span>` +
+    (h.bad ? '<br><span class="dim">疑似來源站標錯，隨即回復</span>' : '');
+}
+
+// 在展開的明細裡接上懸停。每次重畫明細（切換區間也是）都要重接一次。
+function bindChart(box){
+  const wrap = box && box.querySelector('.chartwrap');
+  if (!wrap) return;
+  const hov = JSON.parse(wrap.dataset.hov), W = +wrap.dataset.w, H = +wrap.dataset.h;
+  const endDay = wrap.dataset.end;
+  const svg = wrap.querySelector('svg'), hair = svg.querySelector('.hair');
+  const dot = wrap.querySelector('.hdot'), tip = wrap.querySelector('.tip');
+  let cur = -1;
+  const show = e => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    const vx = (e.clientX - r.left) / r.width * W;
+    let k = 0;                              // 水平距離最近的那一次變價
+    for (let i = 1; i < hov.length; i++)
+      if (Math.abs(hov[i].x - vx) < Math.abs(hov[k].x - vx)) k = i;
+    const h = hov[k];
+    hair.setAttribute('x1', h.x); hair.setAttribute('x2', h.x);
+    hair.style.display = '';
+    const px = h.x / W * r.width, py = h.y / H * r.height;
+    dot.style.left = px + 'px'; dot.style.top = py + 'px'; dot.hidden = false;
+    if (k !== cur){ tip.innerHTML = tipHTML(h, endDay); cur = k; }
+    tip.hidden = false;
+    // 左右碰到邊就收回來；點太靠上時說明放到點的下方
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.max(0, Math.min(r.width - tw, px - tw / 2)) + 'px';
+    tip.style.top = (py - th - 12 >= -8 ? py - th - 12 : py + 14) + 'px';
+  };
+  const hide = () => { hair.style.display = 'none'; dot.hidden = true; tip.hidden = true; cur = -1; };
+  wrap.addEventListener('pointermove', show);
+  wrap.addEventListener('pointerdown', show);    // 手機：點一下就顯示
+  wrap.addEventListener('pointerleave', hide);
+}
+
+function chartSVG(win, it, bad, series){
   bad = bad || new Set();
+  const fullLen = series.length;
   if (fullLen < 2)
     return '<div class="pts">目前只有一個價格點，等價格變動後就會出現走勢圖。</div>';
 
@@ -1238,15 +1304,34 @@ function chartSVG(win, it, bad, fullLen){
     .filter((p, i) => !(i === 0 && win.carried))
     .map(([dt,p]) =>
       `<circle class="dot${bad.has(dt)?' bad':''}" cx="${X(Date.parse(dt)).toFixed(1)}"` +
-      ` cy="${clamp(p).toFixed(1)}" r="3">` +
-      `<title>${dt}　$${NT(p)}${bad.has(dt)?'（疑似標錯）':''}</title></circle>`).join('');
+      ` cy="${clamp(p).toFixed(1)}" r="3"/>`).join('');
+
+  // 懸停用的資料：區間內每一次變價（含帶進來的起始價格）的位置與前後文。
+  // 前一個價格與下一次變價日取自完整歷史，所以區間邊緣的點也算得對。
+  const idx = new Map(series.map((q, i) => [q[0], i]));
+  const hov = win.pts.map(([dt, p]) => {
+    const i = idx.get(dt);
+    return {
+      x: +X(Math.max(Date.parse(dt), x0)).toFixed(1), y: +clamp(p).toFixed(1),
+      d: dt, p,
+      pv: i > 0 ? series[i - 1][1] : null,                 // null＝這支商品的第一筆紀錄
+      u: i < fullLen - 1 ? series[i + 1][0] : null,       // null＝維持至今
+      t: (i === fullLen - 1 && it.t && it.pd === dt) ? it.t : '',
+      bad: bad.has(dt) ? 1 : 0,
+    };
+  });
+  const endDay = it.x ? it.l : new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
 
   const fmt = t => new Date(t).toISOString().slice(5,10).replace('-','/');
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+  return `<div class="chartwrap" data-w="${W}" data-h="${H}" data-end="${endDay}"` +
+    ` data-hov="${esc(JSON.stringify(hov))}">` +
+    `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
     role="img" aria-label="價格走勢，最低 ${lo}，最高 ${hi}">
     ${grid}<path class="line" d="${d}"/>${dots}
+    <line class="hair" x1="0" x2="0" y1="${T}" y2="${H-B}" style="display:none"/>
     <text x="${L}" y="${H-6}">${fmt(x0)}</text>
-    <text x="${W-R}" y="${H-6}" text-anchor="end">${fmt(x1)}</text></svg>`;
+    <text x="${W-R}" y="${H-6}" text-anchor="end">${fmt(x1)}</text></svg>` +
+    `<div class="hdot" hidden></div><div class="tip" hidden></div></div>`;
 }
 
 const esc = s => s.replace(/[&<>"]/g, c =>
@@ -1319,7 +1404,7 @@ $('#list').addEventListener('click', async e => {
   if (!b) return;
   RANGE = b.dataset.range;
   const box = OPEN && OPEN.querySelector('.detail');
-  if (box && OPEN_IT) box.innerHTML = detailHTML(OPEN_IT, OPEN_SERIES);
+  if (box && OPEN_IT){ box.innerHTML = detailHTML(OPEN_IT, OPEN_SERIES); bindChart(box); }
 });
 $('#sorts').addEventListener('click', e => {
   const b = e.target.closest('[data-sort]');
